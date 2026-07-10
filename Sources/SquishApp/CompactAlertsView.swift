@@ -140,10 +140,13 @@ struct CompactAlertsView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 150)
                     } else {
-                        ForEach(rankedSessions) { session in
-                            SessionContextRow(session: session, threshold: appState.alertThreshold)
-                            if session.id != rankedSessions.last?.id {
-                                Divider().overlay(.white.opacity(0.04)).padding(.leading, 68)
+                        LazyVStack(spacing: 0) {
+                            ForEach(rankedSessions) { session in
+                                SessionContextRow(session: session, threshold: appState.alertThreshold)
+                                    .equatable()
+                                if session.id != rankedSessions.last?.id {
+                                    Divider().overlay(.white.opacity(0.04)).padding(.leading, 68)
+                                }
                             }
                         }
                     }
@@ -197,7 +200,7 @@ private struct AlertBehaviorRow: View {
     }
 }
 
-private struct SessionContextRow: View {
+private struct SessionContextRow: View, Equatable {
     let session: CodingSession
     let threshold: Double
 

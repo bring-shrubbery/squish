@@ -146,9 +146,131 @@ final class SessionParserTests: XCTestCase {
         let directlyParsed = try CodexSessionParser().parse(url: file, projectRoot: projectDirectory)
         XCTAssertEqual(directlyParsed?.id, "codex:nested")
 
-        let sessions = await SessionScanner().scan(projectRoot: projectDirectory)
+        let sessions = await testScanner().scan(projectRoot: projectDirectory)
         XCTAssertTrue(sessions.contains(where: { $0.id == "codex:nested" }))
         XCTAssertEqual(sessions.first(where: { $0.id == "codex:nested" })?.projectPath, nestedProject.path)
+    }
+
+    func testScannerIncrementallyParsesOnlyAppendedBytes() async throws {
+        let sessionDirectory = projectDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let file = sessionDirectory.appendingPathComponent("live.jsonl")
+        try writeJSONLines([
+            [
+                "timestamp": "2026-07-10T10:00:00Z",
+                "type": "session_meta",
+                "payload": ["id": "live", "cwd": projectDirectory.path, "context_window": 10_000]
+            ],
+            [
+                "timestamp": "2026-07-10T10:01:00Z",
+                "type": "turn_context",
+                "payload": ["model": "gpt-5.4", "cwd": projectDirectory.path]
+            ],
+            codexTokenEvent(input: 1_000, cached: 400, output: 100, context: 900)
+        ], to: file)
+
+        let scanner = testScanner()
+        let initial = await scanner.scan(projectRoot: projectDirectory)
+        XCTAssertEqual(initial.first(where: { $0.id == "codex:live" })?.contextTokens, 900)
+        let metricsBeforeAppend = scanner.metricsSnapshot()
+
+        try appendJSONLine(
+            codexTokenEvent(input: 2_000, cached: 1_000, output: 250, context: 1_800),
+            to: file
+        )
+        let refreshed = await scanner.refresh(projectRoot: projectDirectory, changedPaths: [file])
+        let live = try XCTUnwrap(refreshed.first(where: { $0.id == "codex:live" }))
+        let metricsAfterAppend = scanner.metricsSnapshot()
+
+        XCTAssertEqual(live.contextTokens, 1_800)
+        XCTAssertEqual(live.usage.inputTokens, 1_000)
+        XCTAssertEqual(live.usage.cachedReadTokens, 1_000)
+        XCTAssertEqual(live.usage.outputTokens, 250)
+        XCTAssertEqual(metricsAfterAppend.fullParses, metricsBeforeAppend.fullParses)
+        XCTAssertEqual(metricsAfterAppend.incrementalParses, metricsBeforeAppend.incrementalParses + 1)
+        XCTAssertEqual(metricsAfterAppend.changedFilesInspected, metricsBeforeAppend.changedFilesInspected + 1)
+
+        _ = await scanner.discoverNewSessions(projectRoot: projectDirectory)
+        XCTAssertEqual(scanner.metricsSnapshot().membershipChecks, metricsAfterAppend.membershipChecks)
+    }
+
+    func testScannerLoadsUnchangedSessionFromPersistentSummary() async throws {
+        let sessionDirectory = projectDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let cacheDirectory = temporaryDirectory.appendingPathComponent("summary-cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let file = sessionDirectory.appendingPathComponent("cached.jsonl")
+        try writeJSONLines([
+            [
+                "timestamp": "2026-07-10T10:00:00Z",
+                "type": "session_meta",
+                "payload": ["id": "cached", "cwd": projectDirectory.path, "context_window": 10_000]
+            ],
+            [
+                "timestamp": "2026-07-10T10:01:00Z",
+                "type": "turn_context",
+                "payload": ["model": "gpt-5.4", "cwd": projectDirectory.path]
+            ],
+            codexTokenEvent(input: 1_000, cached: 400, output: 100, context: 900)
+        ], to: file)
+
+        let firstScanner = SessionScanner(
+            fileManager: .default,
+            summaryCacheDirectory: cacheDirectory
+        )
+        let firstBatch = await firstScanner.scanInitialBatch(projectRoot: projectDirectory)
+        XCTAssertEqual(firstBatch.sessions.first(where: { $0.id == "codex:cached" })?.contextTokens, 900)
+        XCTAssertEqual(firstScanner.metricsSnapshot().fullParses, 1)
+        XCTAssertEqual(firstScanner.metricsSnapshot().summaryCacheWrites, 1)
+
+        let secondScanner = SessionScanner(
+            fileManager: .default,
+            summaryCacheDirectory: cacheDirectory
+        )
+        let secondBatch = await secondScanner.scanInitialBatch(projectRoot: projectDirectory)
+        XCTAssertEqual(secondBatch.sessions.first(where: { $0.id == "codex:cached" })?.contextTokens, 900)
+        XCTAssertEqual(secondScanner.metricsSnapshot().fullParses, 0)
+        XCTAssertEqual(secondScanner.metricsSnapshot().summaryCacheHits, 1)
+    }
+
+    func testInitialHistoryLoadsInRecentFirstBatches() async throws {
+        let sessionDirectory = projectDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let older = sessionDirectory.appendingPathComponent("older.jsonl")
+        let newer = sessionDirectory.appendingPathComponent("newer.jsonl")
+
+        for (file, id) in [(older, "older"), (newer, "newer")] {
+            try writeJSONLines([
+                [
+                    "timestamp": "2026-07-10T10:00:00Z",
+                    "type": "session_meta",
+                    "payload": ["id": id, "cwd": projectDirectory.path, "context_window": 10_000]
+                ],
+                [
+                    "timestamp": "2026-07-10T10:01:00Z",
+                    "type": "turn_context",
+                    "payload": ["model": "gpt-5.4", "cwd": projectDirectory.path]
+                ]
+            ], to: file)
+        }
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: newer.path)
+
+        let scanner = testScanner()
+        let first = await scanner.scanInitialBatch(
+            projectRoot: projectDirectory,
+            maxFullParses: 1,
+            maxCandidates: 1
+        )
+        XCTAssertEqual(first.sessions.map(\.id), ["codex:newer"])
+        XCTAssertTrue(first.hasMoreHistory)
+
+        let second = await scanner.loadNextHistoryBatch(
+            projectRoot: projectDirectory,
+            maxFullParses: 1,
+            maxCandidates: 1
+        )
+        XCTAssertEqual(Set(second.sessions.map(\.id)), ["codex:newer", "codex:older"])
+        XCTAssertFalse(second.hasMoreHistory)
     }
 
     private func writeJSONLines(_ objects: [[String: Any]], to url: URL) throws {
@@ -157,5 +279,42 @@ final class SessionParserTests: XCTestCase {
             return try XCTUnwrap(String(data: data, encoding: .utf8))
         }
         try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func testScanner() -> SessionScanner {
+        SessionScanner(fileManager: .default, summaryCacheDirectory: nil)
+    }
+
+    private func appendJSONLine(_ object: [String: Any], to url: URL) throws {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+        try handle.write(contentsOf: Data([0x0A]))
+    }
+
+    private func codexTokenEvent(
+        input: Int,
+        cached: Int,
+        output: Int,
+        context: Int
+    ) -> [String: Any] {
+        [
+            "timestamp": "2026-07-10T10:02:00Z",
+            "type": "event_msg",
+            "payload": [
+                "type": "token_count",
+                "info": [
+                    "model_context_window": 10_000,
+                    "total_token_usage": [
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output
+                    ],
+                    "last_token_usage": ["input_tokens": context, "output_tokens": 50]
+                ]
+            ]
+        ]
     }
 }

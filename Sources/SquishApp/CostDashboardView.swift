@@ -5,26 +5,9 @@ import SwiftUI
 struct CostDashboardView: View {
     @EnvironmentObject private var appState: AppState
 
-    private var pricedSessions: [(CodingSession, CostBreakdown)] {
-        appState.sessions.compactMap { session in
-            session.cost().map { (session, $0) }
-        }
-    }
-
-    private var total: CostBreakdown {
-        pricedSessions.reduce(.zero) { $0 + $1.1 }
-    }
-
-    private var dailyCosts: [DailyCost] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: pricedSessions) { calendar.startOfDay(for: $0.0.updatedAt) }
-        return grouped.map { date, rows in
-            DailyCost(date: date, amount: rows.reduce(0) { $0 + $1.1.total })
-        }
-        .sorted { $0.date < $1.date }
-    }
-
     var body: some View {
+        let snapshot = CostDashboardSnapshot(entries: appState.costEntries)
+        let liveSessionIDs = Set(appState.sessions.map(\.id))
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .top) {
@@ -50,29 +33,29 @@ struct CostDashboardView: View {
                 HStack(spacing: 12) {
                     CostStatCard(
                         label: "Estimated total",
-                        value: currency(total.total),
-                        detail: "\(pricedSessions.count) priced sessions",
+                        value: currency(snapshot.total.total),
+                        detail: "\(snapshot.pricedSessionCount) priced sessions",
                         color: AppColors.mint,
                         symbol: "dollarsign"
                     )
                     CostStatCard(
                         label: "Input",
-                        value: currency(total.input),
-                        detail: compactTokenCount(appState.sessions.reduce(0) { $0 + $1.usage.inputTokens }),
+                        value: currency(snapshot.total.input),
+                        detail: compactTokenCount(snapshot.inputTokens),
                         color: AppColors.blue,
                         symbol: "arrow.down.left"
                     )
                     CostStatCard(
                         label: "Cache",
-                        value: currency(total.cacheRead + total.cacheWrite),
-                        detail: compactTokenCount(appState.sessions.reduce(0) { $0 + $1.usage.cachedReadTokens }),
+                        value: currency(snapshot.total.cacheRead + snapshot.total.cacheWrite),
+                        detail: compactTokenCount(snapshot.cachedReadTokens),
                         color: AppColors.amber,
                         symbol: "bolt.horizontal.circle"
                     )
                     CostStatCard(
                         label: "Output",
-                        value: currency(total.output),
-                        detail: compactTokenCount(appState.sessions.reduce(0) { $0 + $1.usage.outputTokens }),
+                        value: currency(snapshot.total.output),
+                        detail: compactTokenCount(snapshot.outputTokens),
                         color: Color(red: 0.76, green: 0.53, blue: 0.98),
                         symbol: "arrow.up.right"
                     )
@@ -91,10 +74,10 @@ struct CostDashboardView: View {
                             Spacer()
                         }
 
-                        if dailyCosts.isEmpty {
+                        if snapshot.dailyCosts.isEmpty {
                             EmptyChartView()
                         } else {
-                            Chart(dailyCosts) { point in
+                            Chart(snapshot.dailyCosts) { point in
                                 BarMark(
                                     x: .value("Day", point.date, unit: .day),
                                     y: .value("Cost", point.amount)
@@ -133,7 +116,7 @@ struct CostDashboardView: View {
                     .frame(maxWidth: .infinity)
                     .appCard()
 
-                    CostCompositionCard(cost: total)
+                    CostCompositionCard(cost: snapshot.total)
                         .frame(width: 278)
                 }
 
@@ -142,12 +125,12 @@ struct CostDashboardView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("All sessions")
                                 .font(.system(size: 15, weight: .bold))
-                            Text("Matched by working directory inside the selected folder")
+                            Text("Live sessions and retained cost history")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if appState.sessions.contains(where: { $0.cost() == nil }) {
+                        if snapshot.unpricedSessionCount > 0 {
                             Label("Some models need pricing", systemImage: "exclamationmark.triangle.fill")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(AppColors.amber)
@@ -157,14 +140,21 @@ struct CostDashboardView: View {
 
                     Divider().overlay(.white.opacity(0.05))
 
-                    if appState.sessions.isEmpty {
+                    if appState.costEntries.isEmpty {
                         EmptySessionsView()
                     } else {
                         SessionTableHeader()
-                        ForEach(appState.sessions) { session in
-                            SessionCostRow(session: session)
-                            if session.id != appState.sessions.last?.id {
-                                Divider().overlay(.white.opacity(0.04)).padding(.leading, 64)
+                        LazyVStack(spacing: 0) {
+                            ForEach(appState.costEntries) { entry in
+                                SessionCostRow(
+                                    session: entry.session,
+                                    cost: entry.cost,
+                                    isArchived: !liveSessionIDs.contains(entry.id)
+                                )
+                                    .equatable()
+                                if entry.id != appState.costEntries.last?.id {
+                                    Divider().overlay(.white.opacity(0.04)).padding(.leading, 64)
+                                }
                             }
                         }
                     }
@@ -281,8 +271,10 @@ private struct SessionTableHeader: View {
     }
 }
 
-private struct SessionCostRow: View {
+private struct SessionCostRow: View, Equatable {
     let session: CodingSession
+    let cost: CostBreakdown?
+    let isArchived: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -297,6 +289,10 @@ private struct SessionCostRow: View {
                     Text(session.model)
                     Text("•")
                     Text(session.projectName)
+                    if isArchived {
+                        Text("•")
+                        Label("History", systemImage: "archivebox")
+                    }
                 }
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -313,7 +309,7 @@ private struct SessionCostRow: View {
                 .foregroundStyle(session.contextFraction >= 0.8 ? AppColors.amber : .secondary)
                 .frame(width: 110, alignment: .trailing)
 
-            if let cost = session.cost() {
+            if let cost {
                 Text(currency(cost.total))
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .frame(width: 90, alignment: .trailing)
@@ -381,6 +377,36 @@ private struct DailyCost: Identifiable {
     let date: Date
     let amount: Double
     var id: Date { date }
+}
+
+private struct CostDashboardSnapshot {
+    let total: CostBreakdown
+    let pricedSessionCount: Int
+    let unpricedSessionCount: Int
+    let inputTokens: Int
+    let cachedReadTokens: Int
+    let outputTokens: Int
+    let dailyCosts: [DailyCost]
+
+    init(entries: [CostLedgerEntry]) {
+        let priced = entries.compactMap { entry in
+            entry.cost.map { (entry, $0) }
+        }
+        total = priced.reduce(.zero) { $0 + $1.1 }
+        pricedSessionCount = priced.count
+        unpricedSessionCount = entries.count - priced.count
+        inputTokens = entries.reduce(0) { $0 + $1.session.usage.inputTokens }
+        cachedReadTokens = entries.reduce(0) { $0 + $1.session.usage.cachedReadTokens }
+        outputTokens = entries.reduce(0) { $0 + $1.session.usage.outputTokens }
+
+        let calendar = Calendar.current
+        let buckets = entries.flatMap(\.dailyCosts)
+        let grouped = Dictionary(grouping: buckets) { calendar.startOfDay(for: $0.day) }
+        dailyCosts = grouped.map { date, rows in
+            DailyCost(date: date, amount: rows.reduce(0) { $0 + $1.cost.total })
+        }
+        .sorted { $0.date < $1.date }
+    }
 }
 
 func currency(_ amount: Double) -> String {

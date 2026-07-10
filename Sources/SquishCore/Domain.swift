@@ -54,7 +54,7 @@ public struct TokenUsage: Codable, Equatable, Sendable {
     }
 }
 
-public struct CostBreakdown: Equatable, Sendable {
+public struct CostBreakdown: Codable, Equatable, Sendable {
     public let input: Double
     public let cacheRead: Double
     public let cacheWrite: Double
@@ -79,9 +79,18 @@ public struct CostBreakdown: Equatable, Sendable {
             output: lhs.output + rhs.output
         )
     }
+
+    public static func - (lhs: CostBreakdown, rhs: CostBreakdown) -> CostBreakdown {
+        CostBreakdown(
+            input: lhs.input - rhs.input,
+            cacheRead: lhs.cacheRead - rhs.cacheRead,
+            cacheWrite: lhs.cacheWrite - rhs.cacheWrite,
+            output: lhs.output - rhs.output
+        )
+    }
 }
 
-public struct CodingSession: Identifiable, Equatable, Sendable {
+public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let provider: AgentProvider
     public let title: String

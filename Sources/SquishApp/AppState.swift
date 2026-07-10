@@ -36,9 +36,9 @@ struct CompactAlertRecord: Identifiable {
 final class AppState: ObservableObject {
     @Published var projectRoot: URL?
     @Published var sessions: [CodingSession] = []
+    @Published private(set) var costEntries: [CostLedgerEntry] = []
     @Published var selectedSection: AppSection = .costs
     @Published var isScanning = false
-    @Published var lastScannedAt: Date?
     @Published var alertsEnabled: Bool {
         didSet { defaults.set(alertsEnabled, forKey: Keys.alertsEnabled) }
     }
@@ -56,7 +56,14 @@ final class AppState: ObservableObject {
 
     private let defaults: UserDefaults
     private let scanner = SessionScanner()
+    private let costLedger = CostLedgerStore()
     private var monitorTask: Task<Void, Never>?
+    private var eventRefreshTask: Task<Void, Never>?
+    private var costLedgerTask: Task<Void, Never>?
+    private var fileSystemMonitor: FileSystemEventMonitor?
+    private var monitoredRootPaths = Set<String>()
+    private var fileEventsAreActive = false
+    private var pendingChangedPaths = Set<URL>()
     private var scopedURL: URL?
     private var scopedAccessStarted = false
     private var alertIsArmed: Set<String> = []
@@ -71,6 +78,9 @@ final class AppState: ObservableObject {
 
     deinit {
         monitorTask?.cancel()
+        eventRefreshTask?.cancel()
+        costLedgerTask?.cancel()
+        fileSystemMonitor?.stop()
         if scopedAccessStarted { scopedURL?.stopAccessingSecurityScopedResource() }
     }
 
@@ -89,10 +99,11 @@ final class AppState: ObservableObject {
     }
 
     func clearFolder() {
-        monitorTask?.cancel()
-        monitorTask = nil
-        scanner.reset()
+        stopMonitoring()
+        let scanner = scanner
+        Task.detached(priority: .background) { scanner.reset() }
         sessions = []
+        costEntries = []
         projectRoot = nil
         defaults.removeObject(forKey: Keys.bookmark)
         defaults.removeObject(forKey: Keys.pathFallback)
@@ -139,7 +150,7 @@ final class AppState: ObservableObject {
     }
 
     private func setProjectRoot(_ url: URL, persist: Bool) {
-        monitorTask?.cancel()
+        stopMonitoring()
         if scopedAccessStarted { scopedURL?.stopAccessingSecurityScopedResource() }
 
         let normalized = url.standardizedFileURL
@@ -147,9 +158,9 @@ final class AppState: ObservableObject {
         scopedAccessStarted = normalized.startAccessingSecurityScopedResource()
         projectRoot = normalized
         sessions = []
+        costEntries = []
         recentAlerts = []
         alertIsArmed = []
-        scanner.reset()
 
         if persist {
             if let bookmark = try? normalized.bookmarkData(
@@ -166,21 +177,150 @@ final class AppState: ObservableObject {
     }
 
     private func startMonitoring(_ root: URL) {
+        installFileSystemMonitor(for: root)
+        loadCostLedger(for: root)
+
         monitorTask = Task { [weak self] in
             guard let self else { return }
-            var firstScan = true
+            isScanning = true
+            var batch = await scanner.scanInitialBatch(
+                projectRoot: root,
+                maxFullParses: 2,
+                maxCandidates: 300
+            )
+            guard !Task.isCancelled, isCurrentProject(root) else { return }
+            apply(batch.sessions)
+            isScanning = false
+
+            var lastHistoryPublish = Date()
+            while batch.hasMoreHistory, !Task.isCancelled {
+                batch = await scanner.loadNextHistoryBatch(
+                    projectRoot: root,
+                    maxFullParses: 4,
+                    maxCandidates: 300
+                )
+                guard !Task.isCancelled, isCurrentProject(root) else { return }
+                if !batch.hasMoreHistory || Date().timeIntervalSince(lastHistoryPublish) >= 0.5 {
+                    apply(batch.sessions)
+                    lastHistoryPublish = Date()
+                }
+                do {
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                } catch {
+                    return
+                }
+            }
+
+            var fallbackTicks = 0
             while !Task.isCancelled {
-                if firstScan { isScanning = true }
-                let discovered = await scanner.scan(projectRoot: root)
-                guard !Task.isCancelled else { return }
-                sessions = discovered
-                lastScannedAt = Date()
-                isScanning = false
-                evaluateCompactAlerts(in: discovered)
-                firstScan = false
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let interval = fileEventsAreActive ? 30_000_000_000 : 1_000_000_000
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(interval))
+                } catch {
+                    return
+                }
+
+                fallbackTicks += 1
+                let shouldDiscover = fileEventsAreActive || fallbackTicks >= 30
+                let discovered: [CodingSession]
+                if shouldDiscover {
+                    discovered = await scanner.discoverNewSessions(projectRoot: root)
+                } else {
+                    discovered = await scanner.refreshKnownSessions(projectRoot: root)
+                }
+                guard !Task.isCancelled, isCurrentProject(root) else { return }
+                apply(discovered)
+                if shouldDiscover {
+                    fallbackTicks = 0
+                    installFileSystemMonitor(for: root)
+                }
             }
         }
+    }
+
+    private func installFileSystemMonitor(for root: URL) {
+        let monitoringRoots = SessionScanner.monitoringRoots(projectRoot: root)
+        let paths = Set(monitoringRoots.map { $0.path })
+        guard paths != monitoredRootPaths || fileSystemMonitor == nil || !fileEventsAreActive else { return }
+
+        fileSystemMonitor?.stop()
+        let monitor = FileSystemEventMonitor(paths: monitoringRoots) { [weak self] paths in
+            Task { @MainActor [weak self] in
+                self?.enqueueFileChanges(paths, projectRoot: root)
+            }
+        }
+        fileEventsAreActive = monitor.start()
+        fileSystemMonitor = monitor
+        monitoredRootPaths = paths
+    }
+
+    private func stopMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = nil
+        eventRefreshTask?.cancel()
+        eventRefreshTask = nil
+        costLedgerTask?.cancel()
+        costLedgerTask = nil
+        pendingChangedPaths.removeAll()
+        fileSystemMonitor?.stop()
+        fileSystemMonitor = nil
+        monitoredRootPaths.removeAll()
+        fileEventsAreActive = false
+        isScanning = false
+    }
+
+    private func enqueueFileChanges(_ paths: [URL], projectRoot: URL) {
+        guard isCurrentProject(projectRoot) else { return }
+        pendingChangedPaths.formUnion(paths)
+        guard eventRefreshTask == nil else { return }
+
+        eventRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, !pendingChangedPaths.isEmpty {
+                let paths = Array(pendingChangedPaths)
+                pendingChangedPaths.removeAll(keepingCapacity: true)
+                let discovered = await scanner.refresh(projectRoot: projectRoot, changedPaths: paths)
+                guard !Task.isCancelled, isCurrentProject(projectRoot) else { return }
+                apply(discovered)
+            }
+            eventRefreshTask = nil
+        }
+    }
+
+    private func apply(_ discovered: [CodingSession]) {
+        guard discovered != sessions else { return }
+        sessions = discovered
+        evaluateCompactAlerts(in: discovered)
+        guard let root = projectRoot else { return }
+        mergeCostLedger(sessions: discovered, projectRoot: root)
+    }
+
+    private func loadCostLedger(for root: URL) {
+        costLedgerTask?.cancel()
+        costLedgerTask = Task { [weak self] in
+            guard let self else { return }
+            let entries = await costLedger.entries(projectRoot: root)
+            guard !Task.isCancelled, isCurrentProject(root) else { return }
+            if entries != costEntries { costEntries = entries }
+        }
+    }
+
+    private func mergeCostLedger(sessions: [CodingSession], projectRoot: URL) {
+        costLedgerTask?.cancel()
+        costLedgerTask = Task { [weak self] in
+            guard let self else { return }
+            let entries = await costLedger.merge(
+                sessions: sessions,
+                projectRoot: projectRoot
+            )
+            guard !Task.isCancelled, isCurrentProject(projectRoot) else { return }
+            if entries != costEntries { costEntries = entries }
+        }
+    }
+
+    private func isCurrentProject(_ root: URL) -> Bool {
+        projectRoot?.standardizedFileURL.resolvingSymlinksInPath().path
+            == root.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private func evaluateCompactAlerts(in sessions: [CodingSession]) {

@@ -15,8 +15,83 @@ public struct CodexSessionParser: SessionLogParser {
 
     public init() {}
 
+    public func refreshing(
+        _ session: CodingSession,
+        withJSONLines data: Data,
+        fileURL: URL
+    ) -> CodingSession {
+        guard !data.isEmpty else { return session }
+
+        var title = session.title
+        var projectPath = session.projectPath
+        var model = session.model
+        var usage = session.usage
+        var contextTokens = session.contextTokens
+        var contextWindow = session.contextWindow
+        var updatedAt = session.updatedAt
+
+        forEachJSONObjectLine(in: data) { object in
+            guard let type = object["type"] as? String,
+                  let payload = object["payload"] as? [String: Any] else { return }
+
+            let eventDate = dateValue(object["timestamp"])
+            switch type {
+            case "session_meta":
+                updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                projectPath = string(payload["cwd"]) ?? projectPath
+                contextWindow = int(payload["context_window"]) ?? contextWindow
+
+            case "turn_context":
+                updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                model = string(payload["model"]) ?? model
+                projectPath = string(payload["cwd"]) ?? projectPath
+
+            case "event_msg":
+                if payload["type"] as? String == "user_message" {
+                    updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                    if title == "Codex Session" || title == "Codex session" {
+                        title = cleanTitle(string(payload["message"])) ?? title
+                    }
+                }
+                if payload["type"] as? String == "token_count",
+                   let info = payload["info"] as? [String: Any] {
+                    updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                    if let total = info["total_token_usage"] as? [String: Any] {
+                        let allInput = int(total["input_tokens"]) ?? 0
+                        let cached = int(total["cached_input_tokens"]) ?? 0
+                        usage = TokenUsage(
+                            inputTokens: max(0, allInput - cached),
+                            cachedReadTokens: cached,
+                            outputTokens: int(total["output_tokens"]) ?? 0
+                        )
+                    }
+                    if let last = info["last_token_usage"] as? [String: Any] {
+                        contextTokens = int(last["input_tokens"]) ?? int(last["total_tokens"]) ?? contextTokens
+                    }
+                    contextWindow = int(info["model_context_window"]) ?? contextWindow
+                }
+
+            default:
+                return
+            }
+        }
+
+        return CodingSession(
+            id: session.id,
+            provider: session.provider,
+            title: title,
+            projectPath: projectPath,
+            model: model,
+            usage: usage,
+            contextTokens: contextTokens,
+            contextWindow: contextWindow,
+            startedAt: session.startedAt,
+            updatedAt: updatedAt,
+            logPath: fileURL.path
+        )
+    }
+
     public func parse(url: URL, projectRoot: URL) throws -> CodingSession? {
-        let contents = try String(contentsOf: url, encoding: .utf8)
         var sessionID = url.deletingPathExtension().lastPathComponent
         var cwd = ""
         var source = "Codex session"
@@ -28,10 +103,9 @@ public struct CodexSessionParser: SessionLogParser {
         var startedAt: Date?
         var updatedAt: Date?
 
-        for line in contents.split(whereSeparator: \.isNewline) {
-            guard let object = parseJSONObject(String(line)),
-                  let type = object["type"] as? String,
-                  let payload = object["payload"] as? [String: Any] else { continue }
+        try forEachJSONObjectLine(at: url) { object in
+            guard let type = object["type"] as? String,
+                  let payload = object["payload"] as? [String: Any] else { return }
 
             let eventDate = dateValue(object["timestamp"])
             startedAt = earlier(startedAt, eventDate)
@@ -73,7 +147,7 @@ public struct CodexSessionParser: SessionLogParser {
                 }
 
             default:
-                continue
+                return
             }
         }
 
@@ -105,8 +179,59 @@ public struct ClaudeSessionParser: SessionLogParser {
 
     public init() {}
 
+    public func refreshing(
+        _ session: CodingSession,
+        withJSONLines data: Data,
+        fileURL: URL
+    ) -> CodingSession {
+        guard !data.isEmpty else { return session }
+
+        var title = session.title
+        var projectPath = session.projectPath
+        var model = session.model
+        var aggregate = session.usage
+        var latestContextTokens = session.contextTokens
+        var updatedAt = session.updatedAt
+
+        forEachJSONObjectLine(in: data) { object in
+            projectPath = string(object["cwd"]) ?? projectPath
+            let eventDate = dateValue(object["timestamp"])
+
+            guard let type = object["type"] as? String else { return }
+            if type == "user" {
+                updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                if title == "Claude Code session", let message = object["message"] {
+                    title = cleanTitle(extractText(message)) ?? title
+                }
+            }
+
+            guard type == "assistant",
+                  let message = object["message"] as? [String: Any],
+                  let usage = message["usage"] as? [String: Any] else { return }
+
+            updatedAt = later(updatedAt, eventDate) ?? updatedAt
+            model = string(message["model"]) ?? model
+            let requestUsage = claudeTokenUsage(usage)
+            aggregate = aggregate + requestUsage
+            latestContextTokens = requestUsage.totalTokens
+        }
+
+        return CodingSession(
+            id: session.id,
+            provider: session.provider,
+            title: title,
+            projectPath: projectPath,
+            model: model,
+            usage: aggregate,
+            contextTokens: latestContextTokens,
+            contextWindow: PricingCatalog.current.contextWindow(for: model, provider: .claude),
+            startedAt: session.startedAt,
+            updatedAt: updatedAt,
+            logPath: fileURL.path
+        )
+    }
+
     public func parse(url: URL, projectRoot: URL) throws -> CodingSession? {
-        let contents = try String(contentsOf: url, encoding: .utf8)
         var sessionID = url.deletingPathExtension().lastPathComponent
         var cwd = ""
         var model = "unknown"
@@ -116,8 +241,7 @@ public struct ClaudeSessionParser: SessionLogParser {
         var startedAt: Date?
         var updatedAt: Date?
 
-        for line in contents.split(whereSeparator: \.isNewline) {
-            guard let object = parseJSONObject(String(line)) else { continue }
+        try forEachJSONObjectLine(at: url) { object in
             sessionID = string(object["sessionId"]) ?? string(object["session_id"]) ?? sessionID
             cwd = string(object["cwd"]) ?? cwd
 
@@ -125,32 +249,17 @@ public struct ClaudeSessionParser: SessionLogParser {
             startedAt = earlier(startedAt, eventDate)
             updatedAt = later(updatedAt, eventDate)
 
-            guard let type = object["type"] as? String else { continue }
+            guard let type = object["type"] as? String else { return }
             if type == "user", title == nil, let message = object["message"] {
                 title = cleanTitle(extractText(message))
             }
 
             guard type == "assistant",
                   let message = object["message"] as? [String: Any],
-                  let usage = message["usage"] as? [String: Any] else { continue }
+                  let usage = message["usage"] as? [String: Any] else { return }
 
             model = string(message["model"]) ?? model
-            let input = int(usage["input_tokens"]) ?? 0
-            let cacheRead = int(usage["cache_read_input_tokens"]) ?? 0
-            let cacheCreationTotal = int(usage["cache_creation_input_tokens"]) ?? 0
-            let cacheCreation = usage["cache_creation"] as? [String: Any]
-            var cache5m = int(cacheCreation?["ephemeral_5m_input_tokens"]) ?? 0
-            let cache1h = int(cacheCreation?["ephemeral_1h_input_tokens"]) ?? 0
-            cache5m += max(0, cacheCreationTotal - cache5m - cache1h)
-            let output = int(usage["output_tokens"]) ?? 0
-
-            let requestUsage = TokenUsage(
-                inputTokens: input,
-                cachedReadTokens: cacheRead,
-                cacheWrite5mTokens: cache5m,
-                cacheWrite1hTokens: cache1h,
-                outputTokens: output
-            )
+            let requestUsage = claudeTokenUsage(usage)
             aggregate = aggregate + requestUsage
             latestContextTokens = requestUsage.totalTokens
         }
@@ -246,10 +355,87 @@ public struct GeminiSessionParser: SessionLogParser {
     }
 }
 
-private func parseJSONObject(_ line: String) -> [String: Any]? {
-    guard let data = line.data(using: .utf8),
+private let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private let iso8601Basic = ISO8601DateFormatter()
+
+private func parseJSONObject(_ data: Data) -> [String: Any]? {
+    guard !data.isEmpty,
           let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
     return object as? [String: Any]
+}
+
+private func forEachJSONObjectLine(
+    at url: URL,
+    body: ([String: Any]) -> Void
+) throws {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+
+    var buffer = Data()
+    buffer.reserveCapacity(128 * 1024)
+    while true {
+        let chunk = try handle.read(upToCount: 128 * 1024) ?? Data()
+        if chunk.isEmpty { break }
+        buffer.append(chunk)
+        consumeCompleteJSONLines(from: &buffer, body: body)
+    }
+
+    autoreleasepool {
+        if let object = parseJSONObject(buffer) { body(object) }
+    }
+}
+
+private func forEachJSONObjectLine(
+    in data: Data,
+    body: ([String: Any]) -> Void
+) {
+    var buffer = data
+    consumeCompleteJSONLines(from: &buffer, body: body)
+    autoreleasepool {
+        if let object = parseJSONObject(buffer) { body(object) }
+    }
+}
+
+private func consumeCompleteJSONLines(
+    from buffer: inout Data,
+    body: ([String: Any]) -> Void
+) {
+    var lineStart = buffer.startIndex
+    while lineStart < buffer.endIndex,
+          let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
+        let line = Data(buffer[lineStart..<newline])
+        autoreleasepool {
+            if let object = parseJSONObject(line) { body(object) }
+        }
+        lineStart = buffer.index(after: newline)
+    }
+
+    if lineStart > buffer.startIndex {
+        buffer = Data(buffer[lineStart...])
+    }
+}
+
+private func claudeTokenUsage(_ usage: [String: Any]) -> TokenUsage {
+    let input = int(usage["input_tokens"]) ?? 0
+    let cacheRead = int(usage["cache_read_input_tokens"]) ?? 0
+    let cacheCreationTotal = int(usage["cache_creation_input_tokens"]) ?? 0
+    let cacheCreation = usage["cache_creation"] as? [String: Any]
+    var cache5m = int(cacheCreation?["ephemeral_5m_input_tokens"]) ?? 0
+    let cache1h = int(cacheCreation?["ephemeral_1h_input_tokens"]) ?? 0
+    cache5m += max(0, cacheCreationTotal - cache5m - cache1h)
+
+    return TokenUsage(
+        inputTokens: input,
+        cachedReadTokens: cacheRead,
+        cacheWrite5mTokens: cache5m,
+        cacheWrite1hTokens: cache1h,
+        outputTokens: int(usage["output_tokens"]) ?? 0
+    )
 }
 
 private func string(_ value: Any?) -> String? {
@@ -269,9 +455,7 @@ private func dateValue(_ value: Any?) -> Date? {
     if let seconds = value as? Double { return Date(timeIntervalSince1970: seconds) }
     if let seconds = value as? Int { return Date(timeIntervalSince1970: TimeInterval(seconds)) }
     guard let value = value as? String else { return nil }
-    let withFraction = ISO8601DateFormatter()
-    withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return withFraction.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    return iso8601WithFractionalSeconds.date(from: value) ?? iso8601Basic.date(from: value)
 }
 
 private func earlier(_ lhs: Date?, _ rhs: Date?) -> Date? {
