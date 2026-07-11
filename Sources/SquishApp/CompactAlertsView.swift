@@ -5,7 +5,7 @@ struct CompactAlertsView: View {
     @EnvironmentObject private var appState: AppState
 
     private var rankedSessions: [CodingSession] {
-        appState.sessions.sorted {
+        appState.sessions.filter { !$0.isSubagent }.sorted {
             if $0.contextFraction == $1.contextFraction { return $0.updatedAt > $1.updatedAt }
             return $0.contextFraction > $1.contextFraction
         }
@@ -113,7 +113,7 @@ struct CompactAlertsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Session context")
                                 .font(.system(size: 15, weight: .bold))
-                            Text("Highest context pressure first")
+                            Text("Primary sessions only, highest context pressure first")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }

@@ -67,6 +67,7 @@ final class AppState: ObservableObject {
     private var scopedURL: URL?
     private var scopedAccessStarted = false
     private var alertIsArmed: Set<String> = []
+    private var alertBaselineIsEstablished = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -161,6 +162,7 @@ final class AppState: ObservableObject {
         costEntries = []
         recentAlerts = []
         alertIsArmed = []
+        alertBaselineIsEstablished = false
 
         if persist {
             if let bookmark = try? normalized.bookmarkData(
@@ -189,7 +191,8 @@ final class AppState: ObservableObject {
                 maxCandidates: 300
             )
             guard !Task.isCancelled, isCurrentProject(root) else { return }
-            apply(batch.sessions)
+            apply(batch.sessions, alertsMayFire: false)
+            alertBaselineIsEstablished = true
             isScanning = false
 
             var lastHistoryPublish = Date()
@@ -201,7 +204,7 @@ final class AppState: ObservableObject {
                 )
                 guard !Task.isCancelled, isCurrentProject(root) else { return }
                 if !batch.hasMoreHistory || Date().timeIntervalSince(lastHistoryPublish) >= 0.5 {
-                    apply(batch.sessions)
+                    apply(batch.sessions, alertsMayFire: false)
                     lastHistoryPublish = Date()
                 }
                 do {
@@ -267,6 +270,7 @@ final class AppState: ObservableObject {
         monitoredRootPaths.removeAll()
         fileEventsAreActive = false
         isScanning = false
+        alertBaselineIsEstablished = false
     }
 
     private func enqueueFileChanges(_ paths: [URL], projectRoot: URL) {
@@ -287,10 +291,20 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func apply(_ discovered: [CodingSession]) {
+    private func apply(_ discovered: [CodingSession], alertsMayFire: Bool = true) {
         guard discovered != sessions else { return }
+        var previousByID: [String: CodingSession] = [:]
+        for session in sessions {
+            if previousByID[session.id]?.updatedAt ?? .distantPast < session.updatedAt {
+                previousByID[session.id] = session
+            }
+        }
         sessions = discovered
-        evaluateCompactAlerts(in: discovered)
+        evaluateCompactAlerts(
+            in: discovered,
+            previousByID: previousByID,
+            alertsMayFire: alertsMayFire
+        )
         guard let root = projectRoot else { return }
         mergeCostLedger(sessions: discovered, projectRoot: root)
     }
@@ -323,22 +337,32 @@ final class AppState: ObservableObject {
             == root.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    private func evaluateCompactAlerts(in sessions: [CodingSession]) {
-        let sessionIDs = Set(sessions.map(\.id))
+    private func evaluateCompactAlerts(
+        in sessions: [CodingSession],
+        previousByID: [String: CodingSession],
+        alertsMayFire: Bool
+    ) {
+        let alertableSessions = sessions.filter { !$0.isSubagent }
+        let sessionIDs = Set(alertableSessions.map(\.id))
         alertIsArmed.formIntersection(sessionIDs)
 
-        for session in sessions {
+        for session in alertableSessions {
             let fraction = session.contextFraction
             if fraction < max(0.1, alertThreshold - 0.08) {
                 alertIsArmed.insert(session.id)
                 continue
             }
 
-            let activeRecently = Date().timeIntervalSince(session.updatedAt) < 120
+            let hasAlerted = recentAlerts.contains { $0.sessionID == session.id }
             if alertsEnabled,
-               activeRecently,
-               fraction >= alertThreshold,
-               alertIsArmed.contains(session.id) || !recentAlerts.contains(where: { $0.sessionID == session.id }) {
+               CompactAlertPolicy.shouldNotify(
+                    previous: previousByID[session.id],
+                    current: session,
+                    threshold: alertThreshold,
+                    isArmed: alertIsArmed.contains(session.id),
+                    hasAlerted: hasAlerted,
+                    monitoringIsEstablished: alertBaselineIsEstablished && alertsMayFire
+               ) {
                 alertIsArmed.remove(session.id)
                 let record = CompactAlertRecord(
                     sessionID: session.id,

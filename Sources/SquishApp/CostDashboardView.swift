@@ -289,6 +289,10 @@ private struct SessionCostRow: View, Equatable {
                     Text(session.model)
                     Text("•")
                     Text(session.projectName)
+                    if session.isSubagent {
+                        Text("•")
+                        Label("Subagent", systemImage: "person.2")
+                    }
                     if isArchived {
                         Text("•")
                         Label("History", systemImage: "archivebox")

@@ -27,7 +27,7 @@ final class SessionSummaryStore {
     static func defaultDirectory(fileManager: FileManager) -> URL? {
         fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("com.squish.sessions", isDirectory: true)
-            .appendingPathComponent("session-summaries-v1", isDirectory: true)
+            .appendingPathComponent("session-summaries-v5", isDirectory: true)
     }
 
     func session(

@@ -121,19 +121,26 @@ public actor CostLedgerStore {
 
         for session in sessions {
             let existing = entriesByID[session.id]
+            let matchingExisting = existing.flatMap {
+                $0.session.isSubagent == session.isSubagent ? $0 : nil
+            }
             let calculatedCost = session.cost(using: catalog)
             let shouldRefresh = existing?.session != session
                 || (existing?.cost == nil && calculatedCost != nil)
             guard shouldRefresh else { continue }
 
+            let recordedCost = monotonicCost(
+                existing: matchingExisting?.cost,
+                calculated: calculatedCost
+            )
             let dailyCosts = updatedDailyCosts(
-                existing: existing,
+                existing: matchingExisting,
                 session: session,
-                calculatedCost: calculatedCost
+                calculatedCost: recordedCost
             )
             let entry = CostLedgerEntry(
                 session: session,
-                cost: calculatedCost,
+                cost: recordedCost,
                 dailyCosts: dailyCosts,
                 pricingEffectiveDate: catalog.effectiveDate
             )
@@ -159,8 +166,10 @@ public actor CostLedgerStore {
             autoreleasepool {
                 guard let data = try? Data(contentsOf: file),
                       let entry = try? decoder.decode(CostLedgerEntry.self, from: data) else { return }
-                if let existing = entriesByID[entry.id], existing.recordedAt > entry.recordedAt { return }
-                entriesByID[entry.id] = entry
+                let normalized = normalized(entry)
+                if let existing = entriesByID[normalized.id], existing.recordedAt > normalized.recordedAt { return }
+                entriesByID[normalized.id] = normalized
+                if normalized != entry { persist(normalized) }
             }
         }
     }
@@ -201,6 +210,79 @@ public actor CostLedgerStore {
         return buckets.sorted { $0.day < $1.day }
     }
 
+    private func monotonicCost(
+        existing: CostBreakdown?,
+        calculated: CostBreakdown?
+    ) -> CostBreakdown? {
+        guard let calculated else { return existing }
+        guard let existing else { return calculated.nonnegative }
+        return existing.componentwiseMaximum(with: calculated)
+    }
+
+    private func normalized(_ entry: CostLedgerEntry) -> CostLedgerEntry {
+        let session = normalizedContextWindow(for: entry.session)
+        guard let cost = entry.cost else {
+            guard session != entry.session else { return entry }
+            return CostLedgerEntry(
+                session: session,
+                cost: nil,
+                dailyCosts: entry.dailyCosts,
+                pricingEffectiveDate: entry.pricingEffectiveDate,
+                recordedAt: entry.recordedAt
+            )
+        }
+
+        let normalizedCost = cost.nonnegative
+        let bucketTotal = entry.dailyCosts.reduce(.zero) { $0 + $1.cost }
+        let hasInvalidBucket = entry.dailyCosts.contains { !$0.cost.isFinite || $0.cost.hasNegativeComponent }
+        let totalsDiffer = !bucketTotal.isApproximatelyEqual(to: normalizedCost)
+        let needsCostRepair = hasInvalidBucket || totalsDiffer || cost != normalizedCost
+        guard needsCostRepair || session != entry.session else { return entry }
+
+        let dailyCosts = needsCostRepair
+            ? [
+                DailyCostBucket(
+                    day: Calendar.current.startOfDay(for: session.updatedAt),
+                    cost: normalizedCost
+                )
+            ]
+            : entry.dailyCosts
+
+        return CostLedgerEntry(
+            session: session,
+            cost: normalizedCost,
+            dailyCosts: dailyCosts,
+            pricingEffectiveDate: entry.pricingEffectiveDate,
+            recordedAt: entry.recordedAt
+        )
+    }
+
+    private func normalizedContextWindow(for session: CodingSession) -> CodingSession {
+        guard session.provider == .claude else { return session }
+        let contextWindow = PricingCatalog.current.contextWindow(
+            for: session.model,
+            provider: session.provider,
+            observedTokens: session.contextTokens
+        )
+        guard contextWindow != session.contextWindow else { return session }
+
+        return CodingSession(
+            id: session.id,
+            provider: session.provider,
+            title: session.title,
+            projectPath: session.projectPath,
+            model: session.model,
+            usage: session.usage,
+            contextTokens: session.contextTokens,
+            contextWindow: contextWindow,
+            startedAt: session.startedAt,
+            updatedAt: session.updatedAt,
+            logPath: session.logPath,
+            lastUserMessageAt: session.lastUserMessageAt,
+            isSubagent: session.isSubagent
+        )
+    }
+
     private func persist(_ entry: CostLedgerEntry) {
         guard let directory else { return }
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -218,5 +300,40 @@ public actor CostLedgerStore {
         let candidate = URL(fileURLWithPath: candidate).standardizedFileURL.resolvingSymlinksInPath().path
         let root = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path
         return candidate == root || candidate.hasPrefix(root + "/")
+    }
+}
+
+private extension CostBreakdown {
+    var hasNegativeComponent: Bool {
+        input < 0 || cacheRead < 0 || cacheWrite < 0 || output < 0
+    }
+
+    var isFinite: Bool {
+        input.isFinite && cacheRead.isFinite && cacheWrite.isFinite && output.isFinite
+    }
+
+    var nonnegative: CostBreakdown {
+        CostBreakdown(
+            input: max(0, input),
+            cacheRead: max(0, cacheRead),
+            cacheWrite: max(0, cacheWrite),
+            output: max(0, output)
+        )
+    }
+
+    func componentwiseMaximum(with other: CostBreakdown) -> CostBreakdown {
+        CostBreakdown(
+            input: max(input, other.input),
+            cacheRead: max(cacheRead, other.cacheRead),
+            cacheWrite: max(cacheWrite, other.cacheWrite),
+            output: max(output, other.output)
+        )
+    }
+
+    func isApproximatelyEqual(to other: CostBreakdown) -> Bool {
+        abs(input - other.input) < 0.000_000_1
+            && abs(cacheRead - other.cacheRead) < 0.000_000_1
+            && abs(cacheWrite - other.cacheWrite) < 0.000_000_1
+            && abs(output - other.output) < 0.000_000_1
     }
 }

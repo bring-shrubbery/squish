@@ -67,6 +67,10 @@ final class SessionParserTests: XCTestCase {
         XCTAssertEqual(session.usage.outputTokens, 200)
         XCTAssertEqual(session.contextTokens, 950)
         XCTAssertEqual(session.contextWindow, 2_000)
+        XCTAssertEqual(
+            session.lastUserMessageAt,
+            ISO8601DateFormatter().date(from: "2026-07-10T10:01:10Z")
+        )
     }
 
     func testClaudeParserSeparatesCacheWriteDurations() throws {
@@ -109,6 +113,162 @@ final class SessionParserTests: XCTestCase {
         XCTAssertEqual(session.usage.cacheWrite1hTokens, 50)
         XCTAssertEqual(session.usage.outputTokens, 30)
         XCTAssertEqual(session.contextTokens, 1_000)
+        XCTAssertEqual(
+            session.lastUserMessageAt,
+            ISO8601DateFormatter().date(from: "2026-07-10T10:00:00Z")
+        )
+    }
+
+    func testClaudeParserSkipsInjectedCommandMessagesForTitle() throws {
+        let file = temporaryDirectory.appendingPathComponent("claude-caveat.jsonl")
+        try writeJSONLines([
+            [
+                "type": "user",
+                "sessionId": "session-caveat",
+                "cwd": projectDirectory.path,
+                "message": [
+                    "role": "user",
+                    "content": "<local-command-caveat>Ignore local commands</local-command-caveat>"
+                ]
+            ],
+            [
+                "type": "user",
+                "sessionId": "session-caveat",
+                "cwd": projectDirectory.path,
+                "message": [
+                    "role": "user",
+                    "content": "Fix the real session title"
+                ]
+            ]
+        ], to: file)
+
+        let session = try XCTUnwrap(ClaudeSessionParser().parse(url: file, projectRoot: temporaryDirectory))
+        XCTAssertEqual(session.title, "Fix the real session title")
+        XCTAssertFalse(session.isSubagent)
+    }
+
+    func testClaudeFableSessionUsesMillionTokenContextWindow() throws {
+        let file = temporaryDirectory.appendingPathComponent("claude-fable.jsonl")
+        try writeJSONLines([
+            [
+                "type": "user",
+                "sessionId": "fable-session",
+                "cwd": projectDirectory.path,
+                "message": ["role": "user", "content": "Analyze the long conversation"]
+            ],
+            [
+                "type": "assistant",
+                "sessionId": "fable-session",
+                "cwd": projectDirectory.path,
+                "message": [
+                    "model": "claude-fable-5",
+                    "usage": [
+                        "input_tokens": 100_000,
+                        "cache_read_input_tokens": 300_000,
+                        "cache_creation_input_tokens": 80_000,
+                        "output_tokens": 20_000
+                    ]
+                ]
+            ]
+        ], to: file)
+
+        let session = try XCTUnwrap(ClaudeSessionParser().parse(url: file, projectRoot: temporaryDirectory))
+        XCTAssertEqual(session.contextTokens, 500_000)
+        XCTAssertEqual(session.contextWindow, 1_000_000)
+        XCTAssertEqual(session.contextFraction, 0.5, accuracy: 0.0001)
+    }
+
+    func testClaudeParserMarksSidechainForCostButNotCompactAlerts() throws {
+        let file = temporaryDirectory.appendingPathComponent("claude-sidechain.jsonl")
+        try writeJSONLines([
+            [
+                "type": "user",
+                "sessionId": "sidechain",
+                "cwd": projectDirectory.path,
+                "isSidechain": true,
+                "agentId": "agent-123",
+                "message": ["role": "user", "content": "Investigate this in parallel"]
+            ],
+            [
+                "type": "assistant",
+                "sessionId": "sidechain",
+                "cwd": projectDirectory.path,
+                "isSidechain": true,
+                "agentId": "agent-123",
+                "message": [
+                    "model": "claude-opus-4-8",
+                    "usage": ["input_tokens": 100, "output_tokens": 25]
+                ]
+            ]
+        ], to: file)
+
+        let session = try XCTUnwrap(ClaudeSessionParser().parse(url: file, projectRoot: temporaryDirectory))
+        XCTAssertEqual(session.id, "claude:subagent:agent-123")
+        XCTAssertTrue(session.isSubagent)
+        XCTAssertEqual(session.usage.totalTokens, 125)
+    }
+
+    func testCodexParserMarksSubagentSourceForCostButNotCompactAlerts() throws {
+        let file = temporaryDirectory.appendingPathComponent("codex-subagent.jsonl")
+        try writeJSONLines([
+            [
+                "timestamp": "2026-07-10T10:00:00Z",
+                "type": "session_meta",
+                "payload": [
+                    "id": "codex-subagent",
+                    "cwd": projectDirectory.path,
+                    "source": [
+                        "subagent": [
+                            "thread_spawn": ["parent_thread_id": "parent-session", "depth": 1]
+                        ]
+                    ]
+                ]
+            ],
+            codexTokenEvent(input: 500, cached: 100, output: 50, context: 450)
+        ], to: file)
+
+        let session = try XCTUnwrap(CodexSessionParser().parse(url: file, projectRoot: temporaryDirectory))
+        XCTAssertTrue(session.isSubagent)
+        XCTAssertEqual(session.usage.totalTokens, 550)
+    }
+
+    func testScannerIncludesSubagentUsageForCostAccounting() async throws {
+        let sessionDirectory = projectDirectory.appendingPathComponent(".claude/session", isDirectory: true)
+        let subagentDirectory = projectDirectory
+            .appendingPathComponent(".claude/session/subagents", isDirectory: true)
+        try FileManager.default.createDirectory(at: subagentDirectory, withIntermediateDirectories: true)
+        let mainFile = sessionDirectory.appendingPathComponent("main.jsonl")
+        try writeJSONLines([
+            [
+                "type": "user",
+                "sessionId": "agent-session",
+                "cwd": projectDirectory.path,
+                "message": ["role": "user", "content": "Coordinate the main session"]
+            ]
+        ], to: mainFile)
+        let file = subagentDirectory.appendingPathComponent("agent-123.jsonl")
+        try writeJSONLines([
+            [
+                "type": "assistant",
+                "sessionId": "agent-session",
+                "cwd": projectDirectory.path,
+                "isSidechain": true,
+                "agentId": "agent-123",
+                "message": [
+                    "model": "claude-opus-4-8",
+                    "usage": ["input_tokens": 80, "output_tokens": 20]
+                ]
+            ]
+        ], to: file)
+
+        let sessions = await testScanner().scan(projectRoot: projectDirectory)
+        let subagent = try XCTUnwrap(
+            sessions.first(where: { $0.id == "claude:subagent:agent-123" })
+        )
+        XCTAssertTrue(subagent.isSubagent)
+        XCTAssertEqual(subagent.usage.totalTokens, 100)
+        XCTAssertTrue(sessions.contains { $0.id == "claude:agent-session" && !$0.isSubagent })
+        XCTAssertEqual(Set(sessions.map(\.id)).count, sessions.count)
     }
 
     func testParserExcludesSessionOutsideSelectedFolder() throws {

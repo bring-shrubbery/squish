@@ -29,6 +29,7 @@ public struct CodexSessionParser: SessionLogParser {
         var contextTokens = session.contextTokens
         var contextWindow = session.contextWindow
         var updatedAt = session.updatedAt
+        var lastUserMessageAt = session.lastUserMessageAt
 
         forEachJSONObjectLine(in: data) { object in
             guard let type = object["type"] as? String,
@@ -47,10 +48,15 @@ public struct CodexSessionParser: SessionLogParser {
                 projectPath = string(payload["cwd"]) ?? projectPath
 
             case "event_msg":
-                if payload["type"] as? String == "user_message" {
+                if payload["type"] as? String == "user_message",
+                   let messageTitle = cleanTitle(string(payload["message"])) {
                     updatedAt = later(updatedAt, eventDate) ?? updatedAt
+                    lastUserMessageAt = later(
+                        lastUserMessageAt,
+                        eventDate ?? fileDateRange(fileURL).modified
+                    )
                     if title == "Codex Session" || title == "Codex session" {
-                        title = cleanTitle(string(payload["message"])) ?? title
+                        title = messageTitle
                     }
                 }
                 if payload["type"] as? String == "token_count",
@@ -87,7 +93,9 @@ public struct CodexSessionParser: SessionLogParser {
             contextWindow: contextWindow,
             startedAt: session.startedAt,
             updatedAt: updatedAt,
-            logPath: fileURL.path
+            logPath: fileURL.path,
+            lastUserMessageAt: lastUserMessageAt,
+            isSubagent: session.isSubagent
         )
     }
 
@@ -100,8 +108,10 @@ public struct CodexSessionParser: SessionLogParser {
         var aggregate = TokenUsage()
         var contextTokens = 0
         var title: String?
+        var isSubagent = false
         var startedAt: Date?
         var updatedAt: Date?
+        var lastUserMessageAt: Date?
 
         try forEachJSONObjectLine(at: url) { object in
             guard let type = object["type"] as? String,
@@ -113,6 +123,7 @@ public struct CodexSessionParser: SessionLogParser {
 
             switch type {
             case "session_meta":
+                isSubagent = isSubagent || codexSourceIsSubagent(payload["source"])
                 sessionID = string(payload["id"]) ?? string(payload["session_id"]) ?? sessionID
                 cwd = string(payload["cwd"]) ?? cwd
                 source = string(payload["source"]) ?? source
@@ -126,8 +137,13 @@ public struct CodexSessionParser: SessionLogParser {
                 cwd = string(payload["cwd"]) ?? cwd
 
             case "event_msg":
-                if payload["type"] as? String == "user_message", title == nil {
-                    title = cleanTitle(string(payload["message"]))
+                if payload["type"] as? String == "user_message",
+                   let messageTitle = cleanTitle(string(payload["message"])) {
+                    title = title ?? messageTitle
+                    lastUserMessageAt = later(
+                        lastUserMessageAt,
+                        eventDate ?? fileDateRange(url).modified
+                    )
                 }
                 if payload["type"] as? String == "token_count",
                    let info = payload["info"] as? [String: Any] {
@@ -169,7 +185,9 @@ public struct CodexSessionParser: SessionLogParser {
             contextWindow: resolvedWindow,
             startedAt: startedAt ?? fileDates.created,
             updatedAt: updatedAt ?? fileDates.modified,
-            logPath: url.path
+            logPath: url.path,
+            lastUserMessageAt: lastUserMessageAt,
+            isSubagent: isSubagent
         )
     }
 }
@@ -192,6 +210,7 @@ public struct ClaudeSessionParser: SessionLogParser {
         var aggregate = session.usage
         var latestContextTokens = session.contextTokens
         var updatedAt = session.updatedAt
+        var lastUserMessageAt = session.lastUserMessageAt
 
         forEachJSONObjectLine(in: data) { object in
             projectPath = string(object["cwd"]) ?? projectPath
@@ -200,8 +219,12 @@ public struct ClaudeSessionParser: SessionLogParser {
             guard let type = object["type"] as? String else { return }
             if type == "user" {
                 updatedAt = later(updatedAt, eventDate) ?? updatedAt
-                if title == "Claude Code session", let message = object["message"] {
-                    title = cleanTitle(extractText(message)) ?? title
+                if let message = object["message"], let messageTitle = extractTitle(message) {
+                    lastUserMessageAt = later(
+                        lastUserMessageAt,
+                        eventDate ?? fileDateRange(fileURL).modified
+                    )
+                    if title == "Claude Code session" { title = messageTitle }
                 }
             }
 
@@ -224,25 +247,36 @@ public struct ClaudeSessionParser: SessionLogParser {
             model: model,
             usage: aggregate,
             contextTokens: latestContextTokens,
-            contextWindow: PricingCatalog.current.contextWindow(for: model, provider: .claude),
+            contextWindow: PricingCatalog.current.contextWindow(
+                for: model,
+                provider: .claude,
+                observedTokens: latestContextTokens
+            ),
             startedAt: session.startedAt,
             updatedAt: updatedAt,
-            logPath: fileURL.path
+            logPath: fileURL.path,
+            lastUserMessageAt: lastUserMessageAt,
+            isSubagent: session.isSubagent
         )
     }
 
     public func parse(url: URL, projectRoot: URL) throws -> CodingSession? {
         var sessionID = url.deletingPathExtension().lastPathComponent
+        var subagentID = url.deletingPathExtension().lastPathComponent
         var cwd = ""
         var model = "unknown"
         var aggregate = TokenUsage()
         var latestContextTokens = 0
         var title: String?
+        var isSubagent = url.path.contains("/subagents/")
         var startedAt: Date?
         var updatedAt: Date?
+        var lastUserMessageAt: Date?
 
         try forEachJSONObjectLine(at: url) { object in
+            isSubagent = isSubagent || claudeRecordIsSubagent(object)
             sessionID = string(object["sessionId"]) ?? string(object["session_id"]) ?? sessionID
+            subagentID = string(object["agentId"]) ?? string(object["agent_id"]) ?? subagentID
             cwd = string(object["cwd"]) ?? cwd
 
             let eventDate = dateValue(object["timestamp"])
@@ -250,8 +284,12 @@ public struct ClaudeSessionParser: SessionLogParser {
             updatedAt = later(updatedAt, eventDate)
 
             guard let type = object["type"] as? String else { return }
-            if type == "user", title == nil, let message = object["message"] {
-                title = cleanTitle(extractText(message))
+            if type == "user", let message = object["message"], let messageTitle = extractTitle(message) {
+                title = title ?? messageTitle
+                lastUserMessageAt = later(
+                    lastUserMessageAt,
+                    eventDate ?? fileDateRange(url).modified
+                )
             }
 
             guard type == "assistant",
@@ -268,18 +306,25 @@ public struct ClaudeSessionParser: SessionLogParser {
         let fileDates = fileDateRange(url)
         let resolvedModel = model == "unknown" ? "Unreported model" : model
 
+        let resolvedSessionID = isSubagent ? "subagent:\(subagentID)" : sessionID
         return CodingSession(
-            id: "claude:\(sessionID)",
+            id: "claude:\(resolvedSessionID)",
             provider: .claude,
             title: title ?? "Claude Code session",
             projectPath: cwd,
             model: resolvedModel,
             usage: aggregate,
             contextTokens: latestContextTokens,
-            contextWindow: PricingCatalog.current.contextWindow(for: resolvedModel, provider: .claude),
+            contextWindow: PricingCatalog.current.contextWindow(
+                for: resolvedModel,
+                provider: .claude,
+                observedTokens: latestContextTokens
+            ),
             startedAt: startedAt ?? fileDates.created,
             updatedAt: updatedAt ?? fileDates.modified,
-            logPath: url.path
+            logPath: url.path,
+            lastUserMessageAt: lastUserMessageAt,
+            isSubagent: isSubagent
         )
     }
 }
@@ -312,6 +357,7 @@ public struct GeminiSessionParser: SessionLogParser {
         var latestContext = 0
         var startedAt: Date?
         var updatedAt: Date?
+        var lastUserMessageAt: Date?
 
         for object in objects {
             sessionID = firstString(in: object, keys: ["sessionId", "session_id", "id"]) ?? sessionID
@@ -320,6 +366,7 @@ public struct GeminiSessionParser: SessionLogParser {
             title = title ?? cleanTitle(firstString(in: object, keys: ["firstUserMessage", "title", "prompt"]))
             startedAt = earlier(startedAt, firstDate(in: object, keys: ["startTime", "createdAt", "timestamp"]))
             updatedAt = later(updatedAt, firstDate(in: object, keys: ["lastUpdated", "updatedAt", "timestamp"]))
+            lastUserMessageAt = later(lastUserMessageAt, latestUserMessageDate(in: object))
 
             for usage in dictionaries(named: "usageMetadata", inside: object) {
                 let prompt = int(usage["promptTokenCount"]) ?? int(usage["input_tokens"]) ?? 0
@@ -347,10 +394,15 @@ public struct GeminiSessionParser: SessionLogParser {
             model: resolvedModel,
             usage: aggregate,
             contextTokens: latestContext,
-            contextWindow: PricingCatalog.current.contextWindow(for: resolvedModel, provider: .gemini),
+            contextWindow: PricingCatalog.current.contextWindow(
+                for: resolvedModel,
+                provider: .gemini,
+                observedTokens: latestContext
+            ),
             startedAt: startedAt ?? fileDates.created,
             updatedAt: updatedAt ?? fileDates.modified,
-            logPath: url.path
+            logPath: url.path,
+            lastUserMessageAt: lastUserMessageAt
         )
     }
 }
@@ -476,19 +528,56 @@ private func cleanTitle(_ raw: String?) -> String? {
         .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !title.isEmpty else { return nil }
+    let ignoredPrefixes = [
+        "<local-command-caveat>",
+        "<local-command-stdout>",
+        "<local-command-stderr>",
+        "<command-name>",
+        "<task-notification>",
+        "<system-reminder>",
+        "<tool-result>",
+        "<tool_result>"
+    ]
+    let normalized = title.lowercased()
+    guard !ignoredPrefixes.contains(where: { normalized.hasPrefix($0) }),
+          !normalized.hasPrefix("base directory for this skill:") else { return nil }
     return String(title.prefix(72))
 }
 
-private func extractText(_ value: Any) -> String? {
-    if let text = value as? String { return text }
+private func extractTitle(_ value: Any) -> String? {
+    if let text = value as? String { return cleanTitle(text) }
     if let dictionary = value as? [String: Any] {
-        if let content = dictionary["content"] { return extractText(content) }
-        if let text = dictionary["text"] as? String { return text }
+        if dictionary["type"] as? String == "tool_result" { return nil }
+        if let text = dictionary["text"] as? String, let title = cleanTitle(text) { return title }
+        if let content = dictionary["content"] { return extractTitle(content) }
+        return nil
     }
     if let array = value as? [Any] {
-        return array.compactMap(extractText).first
+        for item in array {
+            if let title = extractTitle(item) { return title }
+        }
     }
     return nil
+}
+
+func codexSourceIsSubagent(_ value: Any?) -> Bool {
+    if let source = value as? String {
+        let normalized = source.lowercased()
+        return normalized.contains("subagent") || normalized.contains("sub-agent")
+    }
+    if let source = value as? [String: Any] {
+        return source.keys.contains { key in
+            let normalized = key.lowercased()
+            return normalized == "subagent" || normalized == "sub-agent"
+        }
+    }
+    return false
+}
+
+private func claudeRecordIsSubagent(_ object: [String: Any]) -> Bool {
+    object["isSidechain"] as? Bool == true
+        || string(object["agentId"]) != nil
+        || string(object["agent_id"]) != nil
 }
 
 private func isInside(_ path: String, root: String) -> Bool {
@@ -521,6 +610,32 @@ private func firstDate(in object: [String: Any], keys: [String]) -> Date? {
         if let value = dateValue(object[key]) { return value }
     }
     return nil
+}
+
+private func latestUserMessageDate(in value: Any) -> Date? {
+    if let array = value as? [Any] {
+        return array.reduce(nil as Date?) { latest, item in
+            later(latest, latestUserMessageDate(in: item))
+        }
+    }
+    guard let dictionary = value as? [String: Any] else { return nil }
+
+    var latest: Date?
+    let role = (string(dictionary["role"]) ?? string(dictionary["type"]))?.lowercased()
+    if role == "user" {
+        let content = dictionary["content"] ?? dictionary["message"] ?? dictionary["text"]
+        if let content, extractTitle(content) != nil {
+            latest = firstDate(
+                in: dictionary,
+                keys: ["timestamp", "createdAt", "created_at", "time"]
+            )
+        }
+    }
+
+    for nested in dictionary.values {
+        latest = later(latest, latestUserMessageDate(in: nested))
+    }
+    return latest
 }
 
 private func dictionaries(named key: String, inside value: Any) -> [[String: Any]] {

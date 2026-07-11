@@ -10,11 +10,17 @@ let package = Package(
     products: [
         .executable(name: "Squish", targets: ["SquishApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.1.0")
+    ],
     targets: [
         .target(name: "SquishCore"),
         .executableTarget(
             name: "SquishApp",
-            dependencies: ["SquishCore"],
+            dependencies: [
+                "SquishCore",
+                .product(name: "DynamicNotchKit", package: "DynamicNotchKit")
+            ],
             exclude: ["Resources"]
         ),
         .testTarget(

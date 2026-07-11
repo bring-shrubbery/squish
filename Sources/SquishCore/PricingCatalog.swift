@@ -107,8 +107,23 @@ public struct PricingCatalog: Sendable {
             }
     }
 
-    public func contextWindow(for model: String, provider: AgentProvider) -> Int {
-        price(for: model, provider: provider)?.contextWindow ?? 200_000
+    public func contextWindow(
+        for model: String,
+        provider: AgentProvider,
+        observedTokens: Int = 0
+    ) -> Int {
+        if let configured = price(for: model, provider: provider)?.contextWindow {
+            return configured
+        }
+
+        switch provider {
+        case .claude:
+            return observedTokens > 200_000 ? 1_000_000 : 200_000
+        case .codex:
+            return observedTokens > 200_000 ? 400_000 : 200_000
+        case .gemini:
+            return 1_048_576
+        }
     }
 
     public static let current = PricingCatalog(
@@ -122,6 +137,7 @@ public struct PricingCatalog: Sendable {
             ModelPrice(provider: .codex, canonicalModel: "gpt-5.1-codex-mini", aliases: ["gpt-5-mini"], inputPerMillion: 0.25, cachedReadPerMillion: 0.025, outputPerMillion: 2, contextWindow: 400_000),
             ModelPrice(provider: .codex, canonicalModel: "gpt-5.1", aliases: ["gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5-codex", "gpt-5"], inputPerMillion: 1.25, cachedReadPerMillion: 0.125, outputPerMillion: 10, contextWindow: 400_000),
 
+            ModelPrice(provider: .claude, canonicalModel: "claude-fable-5", aliases: ["claude-mythos-5"], inputPerMillion: 10, cachedReadPerMillion: 1, cacheWrite5mPerMillion: 12.5, cacheWrite1hPerMillion: 20, outputPerMillion: 50, contextWindow: 1_000_000),
             ModelPrice(provider: .claude, canonicalModel: "claude-opus-4-8", aliases: ["claude-opus-4-7", "claude-opus-4-6"], inputPerMillion: 5, cachedReadPerMillion: 0.5, cacheWrite5mPerMillion: 6.25, cacheWrite1hPerMillion: 10, outputPerMillion: 25, contextWindow: 1_000_000),
             ModelPrice(provider: .claude, canonicalModel: "claude-opus-4-5", inputPerMillion: 5, cachedReadPerMillion: 0.5, cacheWrite5mPerMillion: 6.25, cacheWrite1hPerMillion: 10, outputPerMillion: 25, contextWindow: 200_000),
             ModelPrice(provider: .claude, canonicalModel: "claude-sonnet-5", inputPerMillion: 2, cachedReadPerMillion: 0.2, cacheWrite5mPerMillion: 2.5, cacheWrite1hPerMillion: 4, outputPerMillion: 10, contextWindow: 1_000_000),

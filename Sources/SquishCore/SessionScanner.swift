@@ -262,7 +262,6 @@ public final class SessionScanner: @unchecked Sendable {
                 under: directory,
                 provider: provider,
                 extensions: supportedExtensions(for: provider),
-                excluding: provider == .claude ? ["/subagents/"] : [],
                 to: &found
             )
             integrate(found, projectRoot: root, pruningMissing: false)
@@ -438,7 +437,14 @@ public final class SessionScanner: @unchecked Sendable {
     }
 
     private func sortedSessions() -> [CodingSession] {
-        sessionsByPath.values.sorted {
+        var uniqueByID: [String: CodingSession] = [:]
+        for session in sessionsByPath.values {
+            if uniqueByID[session.id]?.updatedAt ?? .distantPast < session.updatedAt {
+                uniqueByID[session.id] = session
+            }
+        }
+
+        return uniqueByID.values.sorted {
             if $0.updatedAt == $1.updatedAt { return $0.id < $1.id }
             return $0.updatedAt > $1.updatedAt
         }
@@ -458,7 +464,6 @@ public final class SessionScanner: @unchecked Sendable {
             under: home.appendingPathComponent(".claude/projects"),
             provider: .claude,
             extensions: supportedExtensions(for: .claude),
-            excluding: ["/subagents/"],
             to: &result
         )
         addFiles(
@@ -477,7 +482,6 @@ public final class SessionScanner: @unchecked Sendable {
                 under: directory,
                 provider: provider,
                 extensions: supportedExtensions(for: provider),
-                excluding: provider == .claude ? ["/subagents/"] : [],
                 to: &result
             )
         }
@@ -489,7 +493,6 @@ public final class SessionScanner: @unchecked Sendable {
         under root: URL,
         provider: AgentProvider,
         extensions: Set<String>,
-        excluding fragments: [String] = [],
         to result: inout Set<Candidate>
     ) {
         guard fileManager.fileExists(atPath: root.path),
@@ -500,8 +503,7 @@ public final class SessionScanner: @unchecked Sendable {
               ) else { return }
 
         for case let url as URL in enumerator {
-            guard extensions.contains(url.pathExtension.lowercased()),
-                  !fragments.contains(where: url.path.contains) else { continue }
+            guard extensions.contains(url.pathExtension.lowercased()) else { continue }
             result.insert(Candidate(url: url, provider: provider))
         }
     }

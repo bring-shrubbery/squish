@@ -102,6 +102,10 @@ public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
     public let startedAt: Date
     public let updatedAt: Date
     public let logPath: String
+    public let lastUserMessageAt: Date?
+    private let subagentFlag: Bool?
+
+    public var isSubagent: Bool { subagentFlag == true }
 
     public init(
         id: String,
@@ -114,7 +118,9 @@ public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
         contextWindow: Int,
         startedAt: Date,
         updatedAt: Date,
-        logPath: String
+        logPath: String,
+        lastUserMessageAt: Date? = nil,
+        isSubagent: Bool = false
     ) {
         self.id = id
         self.provider = provider
@@ -127,6 +133,8 @@ public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.logPath = logPath
+        self.lastUserMessageAt = lastUserMessageAt
+        self.subagentFlag = isSubagent
     }
 
     public var contextFraction: Double {
@@ -142,5 +150,31 @@ public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
             usage: usage,
             currentContextTokens: contextTokens
         )
+    }
+}
+
+public enum CompactAlertPolicy {
+    public static func shouldNotify(
+        previous: CodingSession?,
+        current: CodingSession,
+        threshold: Double,
+        isArmed: Bool,
+        hasAlerted: Bool,
+        monitoringIsEstablished: Bool,
+        now: Date = Date()
+    ) -> Bool {
+        guard monitoringIsEstablished,
+              !current.isSubagent,
+              current.contextFraction >= threshold,
+              let currentMessageDate = current.lastUserMessageAt else { return false }
+
+        if let previousMessageDate = previous?.lastUserMessageAt,
+           currentMessageDate <= previousMessageDate {
+            return false
+        }
+
+        let messageAge = now.timeIntervalSince(currentMessageDate)
+        guard messageAge >= -5, messageAge < 120 else { return false }
+        return isArmed || !hasAlerted
     }
 }

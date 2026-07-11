@@ -32,12 +32,43 @@ final class PricingCatalogTests: XCTestCase {
     }
 
     func testCurrentClaudeContextWindows() throws {
+        let fable5 = try XCTUnwrap(PricingCatalog.current.price(for: "claude-fable-5", provider: .claude))
+        let mythos5 = try XCTUnwrap(PricingCatalog.current.price(for: "claude-mythos-5", provider: .claude))
         let opus48 = try XCTUnwrap(PricingCatalog.current.price(for: "claude-opus-4-8", provider: .claude))
         let opus45 = try XCTUnwrap(PricingCatalog.current.price(for: "claude-opus-4-5", provider: .claude))
         let sonnet46 = try XCTUnwrap(PricingCatalog.current.price(for: "claude-sonnet-4-6", provider: .claude))
 
+        XCTAssertEqual(fable5.contextWindow, 1_000_000)
+        XCTAssertEqual(mythos5.contextWindow, 1_000_000)
         XCTAssertEqual(opus48.contextWindow, 1_000_000)
         XCTAssertEqual(opus45.contextWindow, 200_000)
         XCTAssertEqual(sonnet46.contextWindow, 1_000_000)
+    }
+
+    func testFablePricingAndUnknownClaudeWindowInference() throws {
+        let fable = try XCTUnwrap(PricingCatalog.current.price(for: "claude-fable-5", provider: .claude))
+        let cost = fable.cost(
+            usage: TokenUsage(
+                inputTokens: 1_000_000,
+                cachedReadTokens: 1_000_000,
+                cacheWrite5mTokens: 1_000_000,
+                cacheWrite1hTokens: 1_000_000,
+                outputTokens: 1_000_000
+            ),
+            currentContextTokens: 500_000
+        )
+
+        XCTAssertEqual(cost.input, 10, accuracy: 0.0001)
+        XCTAssertEqual(cost.cacheRead, 1, accuracy: 0.0001)
+        XCTAssertEqual(cost.cacheWrite, 32.5, accuracy: 0.0001)
+        XCTAssertEqual(cost.output, 50, accuracy: 0.0001)
+        XCTAssertEqual(
+            PricingCatalog.current.contextWindow(
+                for: "claude-future-model",
+                provider: .claude,
+                observedTokens: 400_000
+            ),
+            1_000_000
+        )
     }
 }

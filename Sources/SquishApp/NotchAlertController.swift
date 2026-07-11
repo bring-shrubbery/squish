@@ -1,4 +1,5 @@
 import AppKit
+import DynamicNotchKit
 import SquishCore
 import SwiftUI
 
@@ -6,47 +7,40 @@ import SwiftUI
 final class NotchAlertController {
     static let shared = NotchAlertController()
 
-    private var panel: NSPanel?
-    private var dismissTask: Task<Void, Never>?
+    private typealias AlertNotch = DynamicNotch<AnyView, EmptyView, EmptyView>
+
+    private var notch: AlertNotch?
+    private var presentationTask: Task<Void, Never>?
 
     private init() {}
 
     func show(session: CodingSession, threshold: Double, isPreview: Bool = false) {
-        dismissTask?.cancel()
-        panel?.orderOut(nil)
+        presentationTask?.cancel()
 
-        let size = NSSize(width: 420, height: 108)
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.contentView = NSHostingView(
-            rootView: NotchAlertView(session: session, threshold: threshold, isPreview: isPreview)
-        )
+        let previousNotch = notch
+        let nextNotch = AlertNotch {
+            AnyView(NotchAlertView(session: session, threshold: threshold, isPreview: isPreview))
+        }
+        notch = nextNotch
 
-        let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens[0]
-        let frame = screen.frame
-        panel.setFrameOrigin(NSPoint(
-            x: frame.midX - size.width / 2,
-            y: frame.maxY - size.height - 4
-        ))
-        panel.orderFrontRegardless()
-        self.panel = panel
+        let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
 
-        dismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: isPreview ? 5_000_000_000 : 10_000_000_000)
+        presentationTask = Task { [weak self] in
+            if let previousNotch { await previousNotch.hide() }
             guard !Task.isCancelled else { return }
-            self?.panel?.orderOut(nil)
-            self?.panel = nil
+            await nextNotch.expand(on: screen)
+
+            do {
+                try await Task.sleep(for: .seconds(isPreview ? 5 : 10))
+            } catch {
+                await nextNotch.hide()
+                return
+            }
+
+            await nextNotch.hide()
+            if self?.notch === nextNotch { self?.notch = nil }
         }
     }
 }
@@ -103,17 +97,10 @@ private struct NotchAlertView: View {
                 .padding(.vertical, 7)
                 .background(.white.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
         }
+        .frame(width: 390)
         .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.black.opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(.white.opacity(0.09), lineWidth: 1)
-                )
-        )
-        .padding(8)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
     }
 
     private var providerColor: Color {
