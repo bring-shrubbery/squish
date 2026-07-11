@@ -56,7 +56,7 @@ struct CostDashboardView: View {
                         label: "Output",
                         value: currency(snapshot.total.output),
                         detail: compactTokenCount(snapshot.outputTokens),
-                        color: Color(red: 0.76, green: 0.53, blue: 0.98),
+                        color: AppColors.violet,
                         symbol: "arrow.up.right"
                     )
                 }
@@ -84,7 +84,7 @@ struct CostDashboardView: View {
                                 )
                                 .foregroundStyle(
                                     LinearGradient(
-                                        colors: [AppColors.mint, AppColors.mint.opacity(0.36)],
+                                        colors: [AppColors.pink, AppColors.violet, AppColors.blue, AppColors.cyan],
                                         startPoint: .top,
                                         endPoint: .bottom
                                     )
@@ -216,7 +216,7 @@ private struct CostCompositionCard: View {
             CostComponentRow(label: "Input", amount: cost.input, total: cost.total, color: AppColors.blue)
             CostComponentRow(label: "Cache reads", amount: cost.cacheRead, total: cost.total, color: AppColors.amber)
             CostComponentRow(label: "Cache writes", amount: cost.cacheWrite, total: cost.total, color: AppColors.coral)
-            CostComponentRow(label: "Output", amount: cost.output, total: cost.total, color: Color(red: 0.76, green: 0.53, blue: 0.98))
+            CostComponentRow(label: "Output", amount: cost.output, total: cost.total, color: AppColors.violet)
             Spacer(minLength: 0)
         }
         .padding(18)
@@ -330,7 +330,7 @@ struct ProviderIcon: View {
     var color: Color {
         switch provider {
         case .codex: AppColors.mint
-        case .claude: Color(red: 0.95, green: 0.57, blue: 0.37)
+        case .claude: AppColors.pink
         case .gemini: AppColors.blue
         }
     }

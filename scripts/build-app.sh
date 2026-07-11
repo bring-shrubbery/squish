@@ -12,6 +12,7 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$ROOT_DIR/.build/release/Squish" "$APP_DIR/Contents/MacOS/Squish"
 cp "$ROOT_DIR/Support/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "$ROOT_DIR/Sources/SquishApp/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP_DIR"
 
 echo "$APP_DIR"

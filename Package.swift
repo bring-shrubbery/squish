@@ -14,7 +14,8 @@ let package = Package(
         .target(name: "SquishCore"),
         .executableTarget(
             name: "SquishApp",
-            dependencies: ["SquishCore"]
+            dependencies: ["SquishCore"],
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "SquishCoreTests",

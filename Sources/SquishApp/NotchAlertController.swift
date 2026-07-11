@@ -118,9 +118,9 @@ private struct NotchAlertView: View {
 
     private var providerColor: Color {
         switch session.provider {
-        case .codex: Color(red: 0.35, green: 0.89, blue: 0.65)
-        case .claude: Color(red: 0.95, green: 0.57, blue: 0.37)
-        case .gemini: Color(red: 0.48, green: 0.64, blue: 1)
+        case .codex: AppColors.cyan
+        case .claude: AppColors.pink
+        case .gemini: AppColors.blue
         }
     }
 }

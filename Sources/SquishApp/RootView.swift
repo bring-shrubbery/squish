@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -82,7 +83,13 @@ private struct Sidebar: View {
                     .frame(height: 42)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(appState.selectedSection == section ? .white.opacity(0.08) : .clear)
+                            .fill(appState.selectedSection == section ? AppColors.violet.opacity(0.2) : .clear)
+                            .overlay {
+                                if appState.selectedSection == section {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(AppColors.cyan.opacity(0.16), lineWidth: 1)
+                                }
+                            }
                     )
                 }
                 .buttonStyle(.plain)
@@ -143,34 +150,53 @@ struct PageHeader: View {
 }
 
 enum AppColors {
-    static let canvas = Color(red: 0.055, green: 0.062, blue: 0.073)
-    static let sidebar = Color(red: 0.044, green: 0.049, blue: 0.059)
-    static let card = Color.white.opacity(0.045)
-    static let stroke = Color.white.opacity(0.075)
-    static let mint = Color(red: 0.35, green: 0.89, blue: 0.65)
-    static let amber = Color(red: 0.98, green: 0.68, blue: 0.28)
-    static let coral = Color(red: 0.95, green: 0.44, blue: 0.43)
-    static let blue = Color(red: 0.43, green: 0.62, blue: 0.98)
+    static let canvas = Color(red: 0.035, green: 0.043, blue: 0.10)
+    static let sidebar = Color(red: 0.045, green: 0.052, blue: 0.125)
+    static let card = Color(red: 0.12, green: 0.13, blue: 0.25).opacity(0.42)
+    static let stroke = Color(red: 0.64, green: 0.48, blue: 0.82).opacity(0.22)
+
+    static let cyan = Color(red: 0.12, green: 0.72, blue: 0.78)
+    static let blue = Color(red: 0.31, green: 0.30, blue: 0.75)
+    static let violet = Color(red: 0.63, green: 0.41, blue: 0.70)
+    static let magenta = Color(red: 0.75, green: 0.40, blue: 0.70)
+    static let pink = Color(red: 0.87, green: 0.60, blue: 0.69)
+    static let peach = Color(red: 0.91, green: 0.59, blue: 0.56)
+
+    // Semantic aliases used by status views.
+    static let mint = cyan
+    static let amber = peach
+    static let coral = magenta
+
+    static let gasolineGradient = LinearGradient(
+        colors: [pink, magenta, violet, blue, cyan],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
 }
 
 struct AppMark: View {
     let size: CGFloat
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [AppColors.mint, Color(red: 0.23, green: 0.64, blue: 0.76)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            Image(systemName: "rectangle.compress.vertical")
-                .font(.system(size: size * 0.48, weight: .bold))
-                .foregroundStyle(Color.black.opacity(0.72))
+        Group {
+            if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+               let icon = NSImage(contentsOf: iconURL) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                        .fill(AppColors.gasolineGradient)
+                    Image(systemName: "rectangle.compress.vertical")
+                        .font(.system(size: size * 0.48, weight: .bold))
+                        .foregroundStyle(Color.black.opacity(0.72))
+                }
+            }
         }
         .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
     }
 }
 

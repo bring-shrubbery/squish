@@ -5,19 +5,33 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            RadialGradient(
-                colors: [AppColors.mint.opacity(0.12), .clear],
-                center: .top,
-                startRadius: 20,
-                endRadius: 520
-            )
+            ZStack {
+                RadialGradient(
+                    colors: [AppColors.pink.opacity(0.18), .clear],
+                    center: .topLeading,
+                    startRadius: 10,
+                    endRadius: 540
+                )
+                RadialGradient(
+                    colors: [AppColors.cyan.opacity(0.15), .clear],
+                    center: .trailing,
+                    startRadius: 10,
+                    endRadius: 500
+                )
+                RadialGradient(
+                    colors: [AppColors.violet.opacity(0.16), .clear],
+                    center: .bottom,
+                    startRadius: 10,
+                    endRadius: 560
+                )
+            }
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
 
                 AppMark(size: 58)
-                    .shadow(color: AppColors.mint.opacity(0.2), radius: 24, y: 8)
+                    .shadow(color: AppColors.magenta.opacity(0.34), radius: 26, y: 8)
 
                 Text("Keep every coding session in view")
                     .font(.system(size: 32, weight: .bold, design: .rounded))
@@ -45,10 +59,14 @@ struct OnboardingView: View {
                         Text("Choose folder to monitor")
                     }
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.82))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 20)
                     .frame(height: 46)
-                    .background(AppColors.mint, in: RoundedRectangle(cornerRadius: 12))
+                    .background(AppColors.gasolineGradient, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(.white.opacity(0.18), lineWidth: 1)
+                    }
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 32)
