@@ -38,6 +38,9 @@ func liveProviderColor(_ provider: AgentProvider) -> Color {
 
 struct LiveChatsCompactLeading: View {
     @ObservedObject var model: LiveChatsModel
+    @State private var pulse = false
+
+    private var isCoding: Bool { model.chats.contains { $0.status == .working } }
 
     var body: some View {
         HStack(spacing: -4) {
@@ -47,11 +50,24 @@ struct LiveChatsCompactLeading: View {
                     .frame(width: 11, height: 11)
                     .overlay(Circle().stroke(.black.opacity(0.35), lineWidth: 1.5))
                     .opacity(chat.status == .idle ? 0.55 : 1)
+                    .scaleEffect(chat.status == .working && pulse ? 1.18 : 1)
             }
         }
         .padding(.leading, 6)
         .contentShape(Rectangle())
         .onTapGesture { model.onExpandRequested?() }
+        .onAppear { updatePulse() }
+        .onChange(of: isCoding) { updatePulse() }
+    }
+
+    private func updatePulse() {
+        if isCoding {
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        } else {
+            withAnimation(.default) { pulse = false }
+        }
     }
 }
 
@@ -93,6 +109,7 @@ struct LiveChatsExpandedView: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 16)
+        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -295,10 +312,8 @@ struct RequestPromptView: View {
         HStack(spacing: 8) {
             Button("Deny") { model.onResolve?(request, .deny) }
                 .buttonStyle(NotchButtonStyle(tint: AppColors.magenta))
-            Button("Allow once") { model.onResolve?(request, .allow) }
+            Button("Allow") { model.onResolve?(request, .allow) }
                 .buttonStyle(NotchButtonStyle(tint: AppColors.cyan))
-            Button("Always") { model.onResolve?(request, .alwaysAllow) }
-                .buttonStyle(NotchButtonStyle(tint: AppColors.violet))
         }
     }
 

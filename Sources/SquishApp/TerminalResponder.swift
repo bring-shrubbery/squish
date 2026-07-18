@@ -1,24 +1,27 @@
 import AppKit
 import ApplicationServices
 import Foundation
-import UserNotifications
 
 /// Delivers a free-text answer into the terminal running an agent session.
 ///
 /// The write-path is intentionally best-effort and defensive: it never throws.
-/// When Accessibility is granted and the owning process resolves to a running
-/// app, it activates that app, puts the answer on the pasteboard, and synthesizes
-/// Cmd-V + Return. Otherwise it falls back to copying the answer and notifying the
-/// user so nothing is silently lost.
+/// It requests Accessibility lazily — only here, the first time an answer is
+/// actually delivered — so enabling the feature never triggers OS prompts. When
+/// Accessibility is granted and the owning process resolves to a running app, it
+/// activates that app, puts the answer on the pasteboard, and synthesizes
+/// Cmd-V + Return. Otherwise it silently copies the answer to the clipboard.
 @MainActor
 enum TerminalResponder {
     static func deliver(answer: String, toPid pid: Int?) {
         setClipboard(answer)
 
-        guard AXIsProcessTrusted(),
+        // Lazy, on-demand Accessibility prompt (only reached when a user actually
+        // sends a typed answer). If not trusted, the clipboard copy above is the
+        // fallback — no notification permission is ever requested.
+        let trusted = AXIsProcessTrusted() || requestAccessibility()
+        guard trusted,
               let pid,
               let app = NSRunningApplication(processIdentifier: pid_t(pid)) ?? terminalAppOwning(pid: pid) else {
-            notifyFallback(answer: answer)
             return
         }
 
@@ -27,6 +30,12 @@ enum TerminalResponder {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             sendPasteAndReturn()
         }
+    }
+
+    @discardableResult
+    private static func requestAccessibility() -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
+        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
     // MARK: - Clipboard
@@ -80,19 +89,5 @@ enum TerminalResponder {
             guard let id = $0.bundleIdentifier else { return false }
             return terminalBundleIDs.contains(id) && $0.isActive
         }
-    }
-
-    // MARK: - Fallback
-
-    private static func notifyFallback(answer: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "Squish — answer copied"
-        content.body = "Paste it into your terminal: \(answer.prefix(80))"
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request)
     }
 }

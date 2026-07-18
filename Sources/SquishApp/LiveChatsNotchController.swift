@@ -94,8 +94,14 @@ final class LiveChatsNotchController {
     private func ensureNotch() -> Notch {
         if let notch { return notch }
         let model = model
+        // Force `.notch` style so the popup always renders as a black Dynamic
+        // Island (white content) regardless of display or system appearance —
+        // the `.floating` fallback uses a system material that looks like a light
+        // notification in light mode, and hides the compact state on non-notch
+        // displays. `.dark` keeps controls from adapting to a light appearance.
         let created = Notch(
             hoverBehavior: [.keepVisible],
+            style: .notch,
             expanded: { LiveChatsExpandedView(model: model) },
             compactLeading: { LiveChatsCompactLeading(model: model) },
             compactTrailing: { LiveChatsCompactTrailing(model: model) }

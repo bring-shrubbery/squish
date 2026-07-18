@@ -186,8 +186,10 @@ final class AppState: ObservableObject {
 
     private func applyLiveChatsState() {
         if liveChatsEnabled {
+            // Only the hook is needed to approve/deny permissions — no OS prompts.
+            // Accessibility is requested lazily, and only if the user ever sends a
+            // free-text answer (which needs the keystroke path).
             try? hookInstaller.install()
-            hookInstaller.requestAccessibility()
             guard let root = projectRoot else { return }
             controlCenter.start(monitoredRoot: root)
             startLiveChatsPump()
