@@ -8,13 +8,18 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Squish", targets: ["SquishApp"])
+        .executable(name: "Squish", targets: ["SquishApp"]),
+        .executable(name: "squish-hook", targets: ["SquishHook"])
     ],
     dependencies: [
         .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.1.0")
     ],
     targets: [
         .target(name: "SquishCore"),
+        .executableTarget(
+            name: "SquishHook",
+            dependencies: ["SquishCore"]
+        ),
         .executableTarget(
             name: "SquishApp",
             dependencies: [
