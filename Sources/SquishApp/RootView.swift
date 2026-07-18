@@ -33,6 +33,8 @@ struct DashboardShell: View {
                     CostDashboardView()
                 case .compactAlerts:
                     CompactAlertsView()
+                case .liveChats:
+                    LiveChatsSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -72,7 +74,8 @@ private struct Sidebar: View {
                         Text(section.title)
                             .font(.system(size: 14, weight: .semibold))
                         Spacer()
-                        if section == .compactAlerts && appState.alertsEnabled {
+                        if (section == .compactAlerts && appState.alertsEnabled)
+                            || (section == .liveChats && appState.liveChatsEnabled) {
                             Circle()
                                 .fill(AppColors.mint)
                                 .frame(width: 6, height: 6)

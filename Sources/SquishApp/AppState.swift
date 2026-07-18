@@ -6,6 +6,7 @@ import SquishCore
 enum AppSection: String, CaseIterable, Identifiable {
     case costs
     case compactAlerts
+    case liveChats
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .costs: "Costs"
         case .compactAlerts: "Compact alerts"
+        case .liveChats: "Live chats"
         }
     }
 
@@ -20,6 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .costs: "chart.bar.xaxis"
         case .compactAlerts: "rectangle.topthird.inset.filled"
+        case .liveChats: "bubble.left.and.bubble.right.fill"
         }
     }
 }
@@ -46,12 +49,28 @@ final class AppState: ObservableObject {
         didSet { defaults.set(alertThreshold, forKey: Keys.alertThreshold) }
     }
     @Published private(set) var recentAlerts: [CompactAlertRecord] = []
+    @Published var liveChatsEnabled: Bool {
+        didSet {
+            defaults.set(liveChatsEnabled, forKey: Keys.liveChatsEnabled)
+            applyLiveChatsState()
+        }
+    }
+
+    let hookInstaller = HookInstaller()
+    private let controlCenter = AgentControlCenter()
+    private let liveChatsNotch = LiveChatsNotchController()
+    private var liveChatsTimer: Timer?
+    private var liveChatsCancellable: AnyCancellable?
+
+    var liveChatsHookInstalled: Bool { hookInstaller.isInstalled() }
+    var liveChatsAccessibilityGranted: Bool { hookInstaller.accessibilityGranted }
 
     private enum Keys {
         static let bookmark = "selectedProjectBookmark"
         static let pathFallback = "selectedProjectPath"
         static let alertsEnabled = "compactAlertsEnabled"
         static let alertThreshold = "compactAlertThreshold"
+        static let liveChatsEnabled = "liveChatsEnabled"
     }
 
     private let defaults: UserDefaults
@@ -74,7 +93,19 @@ final class AppState: ObservableObject {
         self.alertsEnabled = defaults.object(forKey: Keys.alertsEnabled) as? Bool ?? true
         let storedThreshold = defaults.double(forKey: Keys.alertThreshold)
         self.alertThreshold = storedThreshold > 0 ? storedThreshold : 0.8
+        self.liveChatsEnabled = defaults.object(forKey: Keys.liveChatsEnabled) as? Bool ?? false
+
+        liveChatsNotch.configure(
+            onResolve: { [weak self] request, decision in
+                self?.controlCenter.resolve(request, with: decision)
+            },
+            onOpenTerminal: { chat in
+                NSWorkspace.shared.open(URL(fileURLWithPath: chat.session.projectPath))
+            }
+        )
+
         restoreFolder()
+        applyLiveChatsState()
     }
 
     deinit {
@@ -82,6 +113,7 @@ final class AppState: ObservableObject {
         eventRefreshTask?.cancel()
         costLedgerTask?.cancel()
         fileSystemMonitor?.stop()
+        liveChatsTimer?.invalidate()
         if scopedAccessStarted { scopedURL?.stopAccessingSecurityScopedResource() }
     }
 
@@ -100,6 +132,7 @@ final class AppState: ObservableObject {
     }
 
     func clearFolder() {
+        stopLiveChats()
         stopMonitoring()
         let scanner = scanner
         Task.detached(priority: .background) { scanner.reset() }
@@ -128,6 +161,69 @@ final class AppState: ObservableObject {
             logPath: ""
         )
         NotchAlertController.shared.show(session: session, threshold: alertThreshold, isPreview: true)
+    }
+
+    func previewLiveChat() {
+        guard let root = projectRoot else { return }
+        let request = PendingRequest(
+            id: "preview-\(UUID().uuidString)",
+            sessionId: sessions.first?.id ?? "claude:preview",
+            cwd: root.path,
+            kind: .permission,
+            toolName: "Bash",
+            inputSummary: "rm -rf build/",
+            options: nil,
+            tty: nil,
+            pid: nil,
+            ppid: nil,
+            createdAt: Date()
+        )
+        controlCenter.injectPreview(request)
+        refreshLiveChats()
+    }
+
+    // MARK: - Live chats
+
+    private func applyLiveChatsState() {
+        if liveChatsEnabled {
+            try? hookInstaller.install()
+            hookInstaller.requestAccessibility()
+            guard let root = projectRoot else { return }
+            controlCenter.start(monitoredRoot: root)
+            startLiveChatsPump()
+        } else {
+            stopLiveChats()
+            try? hookInstaller.uninstall()
+        }
+    }
+
+    private func startLiveChatsPump() {
+        liveChatsCancellable = controlCenter.$pendingRequests
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refreshLiveChats() }
+            }
+        liveChatsTimer?.invalidate()
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshLiveChats() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        liveChatsTimer = timer
+        refreshLiveChats()
+    }
+
+    private func stopLiveChats() {
+        liveChatsTimer?.invalidate()
+        liveChatsTimer = nil
+        liveChatsCancellable = nil
+        controlCenter.stop()
+        liveChatsNotch.update(chats: [], pending: [])
+    }
+
+    private func refreshLiveChats() {
+        guard liveChatsEnabled else { return }
+        let pending = controlCenter.pendingRequests
+        let chats = LiveActivity.chats(sessions: sessions, pending: pending, now: Date())
+        liveChatsNotch.update(chats: chats, pending: pending)
     }
 
     private func restoreFolder() {
@@ -176,6 +272,11 @@ final class AppState: ObservableObject {
         }
 
         startMonitoring(normalized)
+
+        if liveChatsEnabled {
+            controlCenter.start(monitoredRoot: normalized)
+            startLiveChatsPump()
+        }
     }
 
     private func startMonitoring(_ root: URL) {
@@ -305,6 +406,7 @@ final class AppState: ObservableObject {
             previousByID: previousByID,
             alertsMayFire: alertsMayFire
         )
+        refreshLiveChats()
         guard let root = projectRoot else { return }
         mergeCostLedger(sessions: discovered, projectRoot: root)
     }
