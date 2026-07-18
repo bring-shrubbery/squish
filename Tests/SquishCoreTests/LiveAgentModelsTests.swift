@@ -27,24 +27,24 @@ final class LiveAgentModelsTests: XCTestCase {
         }
     }
 
-    func testAllowProducesAllowHookJSON() {
+    func testAllowProducesPermissionRequestAllowJSON() {
         let json = ClaudeHookResponse.json(for: .allow)
-        XCTAssertTrue(json.contains("\"permissionDecision\":\"allow\""))
+        XCTAssertTrue(json.contains("\"hookEventName\":\"PermissionRequest\""))
+        XCTAssertTrue(json.contains("\"behavior\":\"allow\""))
     }
 
-    func testDenyProducesDenyHookJSON() {
+    func testDenyProducesDenyBehavior() {
         let json = ClaudeHookResponse.json(for: .deny)
-        XCTAssertTrue(json.contains("\"permissionDecision\":\"deny\""))
+        XCTAssertTrue(json.contains("\"behavior\":\"deny\""))
     }
 
-    func testAnswerProducesDenyWithReason() {
+    func testAnswerCollapsesToDeny() {
         let json = ClaudeHookResponse.json(for: .answer("do X"))
-        XCTAssertTrue(json.contains("\"permissionDecision\":\"deny\""))
-        XCTAssertTrue(json.contains("do X"))
+        XCTAssertTrue(json.contains("\"behavior\":\"deny\""))
     }
 
     func testAlwaysAllowProducesAllow() {
         let json = ClaudeHookResponse.json(for: .alwaysAllow)
-        XCTAssertTrue(json.contains("\"permissionDecision\":\"allow\""))
+        XCTAssertTrue(json.contains("\"behavior\":\"allow\""))
     }
 }

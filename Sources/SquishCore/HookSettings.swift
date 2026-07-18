@@ -1,15 +1,20 @@
 import Foundation
 
-/// Pure merge/unmerge of Squish's `PreToolUse` hook into a decoded Claude Code
-/// `settings.json` dictionary. Never clobbers the user's other hooks; the Squish
-/// hook is identified by its command path.
+/// Pure merge/unmerge of Squish's `PermissionRequest` hook into a decoded Claude
+/// Code `settings.json` dictionary. Never clobbers the user's other hooks; the
+/// Squish hook is identified by its command path.
+///
+/// `PermissionRequest` (not `PreToolUse`) is used deliberately: it fires only when
+/// Claude would actually prompt the user, so auto-approved tool calls never reach
+/// the notch.
 public enum HookSettings {
+    private static let event = "PermissionRequest"
     private static let matcherAll = "*"
     private static let hookTimeout = 310
 
     /// True if a command hook with `command` is present under any `PreToolUse` matcher.
     public static func installed(in settings: [String: Any], command: String) -> Bool {
-        for matcher in preToolUse(in: settings) {
+        for matcher in eventMatchers(in: settings) {
             if commandHooks(in: matcher).contains(where: { $0["command"] as? String == command }) {
                 return true
             }
@@ -19,24 +24,27 @@ public enum HookSettings {
 
     /// Returns a copy of `settings` with the Squish hook merged in (idempotent).
     public static func installing(_ command: String, into settings: [String: Any]) -> [String: Any] {
-        guard !installed(in: settings, command: command) else { return settings }
+        // Migrate away any legacy PreToolUse registration of the same command from
+        // an older Squish version, which would otherwise intercept every tool call.
+        let migrated = removing(command, fromEvent: "PreToolUse", in: settings)
+        guard !installed(in: migrated, command: command) else { return migrated }
 
-        var result = settings
+        var result = migrated
         var hooks = dictionary(result["hooks"]) ?? [:]
-        var preToolUse = dictionaries(hooks["PreToolUse"])
+        var eventHooks = dictionaries(hooks[event])
         let commandHook: [String: Any] = ["type": "command", "command": command, "timeout": hookTimeout]
 
-        if let index = preToolUse.firstIndex(where: { ($0["matcher"] as? String) == matcherAll }) {
-            var matcher = preToolUse[index]
+        if let index = eventHooks.firstIndex(where: { ($0["matcher"] as? String) == matcherAll }) {
+            var matcher = eventHooks[index]
             var matcherHooks = dictionaries(matcher["hooks"])
             matcherHooks.append(commandHook)
             matcher["hooks"] = matcherHooks
-            preToolUse[index] = matcher
+            eventHooks[index] = matcher
         } else {
-            preToolUse.append(["matcher": matcherAll, "hooks": [commandHook]])
+            eventHooks.append(["matcher": matcherAll, "hooks": [commandHook]])
         }
 
-        hooks["PreToolUse"] = preToolUse
+        hooks[event] = eventHooks
         result["hooks"] = hooks
         return result
     }
@@ -44,11 +52,20 @@ public enum HookSettings {
     /// Returns a copy of `settings` with only the Squish hook removed, pruning any
     /// containers left empty.
     public static func removing(_ command: String, from settings: [String: Any]) -> [String: Any] {
-        guard var hooks = dictionary(settings["hooks"]) else { return settings }
-        var preToolUse = dictionaries(hooks["PreToolUse"])
-        guard !preToolUse.isEmpty else { return settings }
+        removing(command, fromEvent: event, in: settings)
+    }
 
-        preToolUse = preToolUse.compactMap { matcher -> [String: Any]? in
+    /// Removes the Squish command hook from a specific event, pruning empties.
+    public static func removing(
+        _ command: String,
+        fromEvent event: String,
+        in settings: [String: Any]
+    ) -> [String: Any] {
+        guard var hooks = dictionary(settings["hooks"]) else { return settings }
+        var eventHooks = dictionaries(hooks[event])
+        guard !eventHooks.isEmpty else { return settings }
+
+        eventHooks = eventHooks.compactMap { matcher -> [String: Any]? in
             var matcher = matcher
             let filtered = commandHooks(in: matcher).filter { $0["command"] as? String != command }
             // Preserve non-command hooks (e.g. other hook types) as well.
@@ -61,10 +78,10 @@ public enum HookSettings {
         }
 
         var result = settings
-        if preToolUse.isEmpty {
-            hooks.removeValue(forKey: "PreToolUse")
+        if eventHooks.isEmpty {
+            hooks.removeValue(forKey: event)
         } else {
-            hooks["PreToolUse"] = preToolUse
+            hooks[event] = eventHooks
         }
         if hooks.isEmpty {
             result.removeValue(forKey: "hooks")
@@ -76,8 +93,8 @@ public enum HookSettings {
 
     // MARK: - Internals
 
-    private static func preToolUse(in settings: [String: Any]) -> [[String: Any]] {
-        dictionaries(dictionary(settings["hooks"])?["PreToolUse"])
+    private static func eventMatchers(in settings: [String: Any]) -> [[String: Any]] {
+        dictionaries(dictionary(settings["hooks"])?[event])
     }
 
     private static func commandHooks(in matcher: [String: Any]) -> [[String: Any]] {

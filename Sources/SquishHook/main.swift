@@ -21,6 +21,14 @@ guard let input = (try? JSONSerialization.jsonObject(with: inputData)) as? [Stri
     passthrough()
 }
 
+// Only act on PermissionRequest — the event that fires solely when Claude would
+// actually prompt the user. Ignoring any other event (e.g. a stale PreToolUse
+// registration from an older install) prevents intercepting auto-approved tools.
+let eventName = (input["hook_event_name"] as? String) ?? ""
+guard eventName == ClaudeHookResponse.eventName else {
+    passthrough()
+}
+
 let cwd = (input["cwd"] as? String) ?? ""
 let toolName = (input["tool_name"] as? String) ?? "tool"
 let sessionId = (input["session_id"] as? String).map { "claude:\($0)" } ?? "claude:unknown"

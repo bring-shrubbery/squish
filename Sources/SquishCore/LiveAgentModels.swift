@@ -89,45 +89,28 @@ public enum AgentDecision: Equatable, Sendable {
     }
 }
 
-/// Builds the JSON a `PreToolUse` hook prints to stdout so Claude Code applies
-/// the user's decision.
+/// Builds the JSON a `PermissionRequest` hook prints to stdout so Claude Code
+/// applies the user's decision.
+///
+/// `PermissionRequest` fires only when Claude would actually show the user a
+/// permission dialog — never for tools auto-approved by the session's permission
+/// mode — so the notch only ever surfaces genuine decisions. Its output carries a
+/// nested `decision.behavior` of `allow` or `deny` (there is no free-text channel,
+/// so typed answers collapse to `deny`).
 public enum ClaudeHookResponse {
+    public static let eventName = "PermissionRequest"
+
     public static func json(for decision: AgentDecision) -> String {
         switch decision {
-        case .allow:
-            return payload(permission: "allow", reason: "Approved in Squish")
-        case .alwaysAllow:
-            return payload(permission: "allow", reason: "Squish: always allow")
-        case .deny:
-            return payload(permission: "deny", reason: "Denied in Squish")
-        case let .answer(text):
-            // Claude Code has no channel to inject a fresh typed answer through a
-            // PreToolUse hook, so we deny the pending tool and hand the reply back
-            // as feedback text. The keystroke write-path delivers the literal
-            // answer into the terminal in parallel.
-            return payload(permission: "deny", reason: text)
+        case .allow, .alwaysAllow:
+            return payload(behavior: "allow")
+        case .deny, .answer:
+            return payload(behavior: "deny")
         }
     }
 
-    private static func payload(permission: String, reason: String) -> String {
-        let escapedReason = escape(reason)
-        return "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\"," +
-            "\"permissionDecision\":\"\(permission)\"," +
-            "\"permissionDecisionReason\":\"\(escapedReason)\"}}"
-    }
-
-    private static func escape(_ string: String) -> String {
-        var result = ""
-        for character in string.unicodeScalars {
-            switch character {
-            case "\"": result += "\\\""
-            case "\\": result += "\\\\"
-            case "\n": result += "\\n"
-            case "\r": result += "\\r"
-            case "\t": result += "\\t"
-            default: result.unicodeScalars.append(character)
-            }
-        }
-        return result
+    private static func payload(behavior: String) -> String {
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"\(eventName)\"," +
+            "\"decision\":{\"behavior\":\"\(behavior)\"}}}"
     }
 }
