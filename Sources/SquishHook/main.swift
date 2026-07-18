@@ -41,14 +41,18 @@ guard spool.heartbeatIsFresh(maxAge: RequestSpool.heartbeatMaxAge),
     passthrough()
 }
 
+let classification = RequestClassifier.classify(
+    toolName: toolName,
+    toolInput: toolInput as? [String: Any]
+)
 let request = PendingRequest(
     id: UUID().uuidString,
     sessionId: sessionId,
     cwd: cwd,
-    kind: .permission,
+    kind: classification.kind,
     toolName: toolName,
-    inputSummary: summarize(toolName: toolName, toolInput: toolInput),
-    options: nil,
+    inputSummary: classification.summary,
+    options: classification.options,
     tty: currentTTY(),
     pid: Int(getpid()),
     ppid: Int(getppid()),
@@ -88,19 +92,4 @@ func pathIsInside(_ path: String, root: String) -> Bool {
 func currentTTY() -> String? {
     guard let cString = ttyname(STDIN_FILENO) ?? ttyname(STDERR_FILENO) else { return nil }
     return String(cString: cString)
-}
-
-func summarize(toolName: String, toolInput: Any?) -> String {
-    guard let dict = toolInput as? [String: Any] else { return toolName }
-    // Prefer the most human-readable field per common tool shapes.
-    for key in ["command", "file_path", "path", "url", "pattern", "description", "prompt"] {
-        if let value = dict[key] as? String, !value.isEmpty {
-            return String(value.replacingOccurrences(of: "\n", with: " ").prefix(200))
-        }
-    }
-    if let data = try? JSONSerialization.data(withJSONObject: dict),
-       let json = String(data: data, encoding: .utf8) {
-        return String(json.prefix(200))
-    }
-    return toolName
 }

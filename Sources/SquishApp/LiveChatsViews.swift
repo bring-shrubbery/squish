@@ -281,29 +281,32 @@ struct RequestPromptView: View {
 
     @ViewBuilder
     private func body(for request: PendingRequest) -> some View {
+        let isQuestion = request.kind == .question
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: request.kind == .permission ? "lock.shield.fill" : "questionmark.bubble.fill")
+                Image(systemName: isQuestion ? "questionmark.bubble.fill" : "lock.shield.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppColors.pink)
-                Text(request.toolName)
+                Text(isQuestion ? "Question" : request.toolName)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
                 Spacer()
             }
 
             Text(request.inputSummary)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.8))
-                .lineLimit(3)
+                .font(.system(size: isQuestion ? 13 : 12,
+                              weight: isQuestion ? .semibold : .medium,
+                              design: isQuestion ? .default : .monospaced))
+                .foregroundStyle(.white.opacity(isQuestion ? 0.95 : 0.8))
+                .lineLimit(isQuestion ? 4 : 3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
 
-            if request.kind == .permission {
-                permissionButtons(for: request)
-            } else {
+            if isQuestion {
                 answerField(for: request)
+            } else {
+                permissionButtons(for: request)
             }
         }
     }
@@ -320,13 +323,28 @@ struct RequestPromptView: View {
     private func answerField(for request: PendingRequest) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let options = request.options, !options.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(options, id: \.self) { option in
-                        Button(option) {
+                VStack(spacing: 6) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                        Button {
                             model.onResolve?(request, .answer(option))
                             answer = ""
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.5))
+                                    .frame(width: 16)
+                                Text(option)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .frame(height: 34)
+                            .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
                         }
-                        .buttonStyle(NotchButtonStyle(tint: .white.opacity(0.14)))
+                        .buttonStyle(.plain)
                     }
                 }
             }

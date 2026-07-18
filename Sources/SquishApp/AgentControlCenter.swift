@@ -54,7 +54,16 @@ final class AgentControlCenter: ObservableObject {
     /// Write the user's decision for a request, delivering typed answers to the
     /// terminal, and optimistically drop it from the pending list.
     func resolve(_ request: PendingRequest, with decision: AgentDecision) {
-        try? spool.writeDecision(decision, for: request.id)
+        // Answering a question means letting Claude's question tool run (allow) and
+        // delivering the chosen text into the terminal — not denying it.
+        let hookDecision: AgentDecision
+        if request.kind == .question, case .answer = decision {
+            hookDecision = .allow
+        } else {
+            hookDecision = decision
+        }
+        try? spool.writeDecision(hookDecision, for: request.id)
+
         if case let .answer(text) = decision {
             TerminalResponder.deliver(answer: text, toPid: request.pid)
         }
