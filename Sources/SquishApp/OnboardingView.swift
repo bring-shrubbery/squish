@@ -67,6 +67,7 @@ struct OnboardingView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(.white.opacity(0.18), lineWidth: 1)
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 32)

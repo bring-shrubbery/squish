@@ -3,11 +3,18 @@ import SwiftUI
 
 struct CompactAlertsView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var sessionSort = CompactSessionSort.contextPressure
 
     private var rankedSessions: [CodingSession] {
-        appState.sessions.filter { !$0.isSubagent }.sorted {
-            if $0.contextFraction == $1.contextFraction { return $0.updatedAt > $1.updatedAt }
-            return $0.contextFraction > $1.contextFraction
+        appState.sessions.filter { !$0.isSubagent }.sorted { lhs, rhs in
+            switch sessionSort {
+            case .contextPressure:
+                if lhs.contextFraction == rhs.contextFraction { return lhs.updatedAt > rhs.updatedAt }
+                return lhs.contextFraction > rhs.contextFraction
+            case .latestActivity:
+                if lhs.updatedAt == rhs.updatedAt { return lhs.contextFraction > rhs.contextFraction }
+                return lhs.updatedAt > rhs.updatedAt
+            }
         }
     }
 
@@ -83,6 +90,7 @@ struct CompactAlertsView: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 38)
                                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -118,10 +126,23 @@ struct CompactAlertsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(rankedSessions.count) DETECTED")
-                            .font(.system(size: 9, weight: .bold))
-                            .tracking(0.8)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Picker("Sort sessions", selection: $sessionSort) {
+                                ForEach(CompactSessionSort.allCases) { sort in
+                                    Label(sort.title, systemImage: sort.symbol)
+                                        .tag(sort)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .frame(width: 145)
+
+                            Text("\(rankedSessions.count) DETECTED")
+                                .font(.system(size: 9, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(18)
 
@@ -176,6 +197,27 @@ struct CompactAlertsView: View {
                 }
             }
             .padding(28)
+        }
+    }
+}
+
+private enum CompactSessionSort: String, CaseIterable, Identifiable {
+    case contextPressure
+    case latestActivity
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .contextPressure: "Highest context"
+        case .latestActivity: "Latest activity"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .contextPressure: "chart.bar.fill"
+        case .latestActivity: "clock.fill"
         }
     }
 }

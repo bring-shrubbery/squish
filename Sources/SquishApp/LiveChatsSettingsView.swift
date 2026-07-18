@@ -72,6 +72,7 @@ struct LiveChatsSettingsView: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 38)
                                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(!appState.liveChatsEnabled)

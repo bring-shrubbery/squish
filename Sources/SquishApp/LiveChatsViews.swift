@@ -272,6 +272,7 @@ struct RequestPromptView: View {
                         Capsule().fill(.white.opacity(selected ? 0.16 : 0.05))
                     )
                     .foregroundStyle(.white.opacity(selected ? 1 : 0.6))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -343,6 +344,7 @@ struct RequestPromptView: View {
                             .padding(.horizontal, 10)
                             .frame(height: 34)
                             .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -389,6 +391,7 @@ struct NotchButtonStyle: ButtonStyle {
             .padding(.horizontal, 12)
             .frame(height: 30)
             .background(tint.opacity(configuration.isPressed ? 0.4 : 0.85), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }

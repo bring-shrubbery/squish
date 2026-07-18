@@ -94,6 +94,7 @@ private struct Sidebar: View {
                                 }
                             }
                     )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
