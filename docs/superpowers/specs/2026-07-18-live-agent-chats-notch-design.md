@@ -1,7 +1,31 @@
 # Live Agent Chats in the Notch — Design
 
 **Date:** 2026-07-18
-**Status:** Approved for implementation
+**Status:** Implemented, then revised after first-run testing
+
+## Revision (post-testing)
+
+First-run testing surfaced four corrections that supersede parts of the original
+design below:
+
+1. **Hook event:** use Claude Code's **`PermissionRequest`** hook, not
+   `PreToolUse`. `PreToolUse` fires on *every* tool call and forced a notch prompt
+   even in accept-edits/bypass/auto modes; `PermissionRequest` fires only when a
+   permission dialog would genuinely appear. Output shape is
+   `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"|"deny"}}}`.
+2. **Free-text answers are out of scope:** Claude's built-in `AskUserQuestion`
+   does not surface to hooks, so arbitrary typed answers can't be intercepted. The
+   notch is **permission approve/deny** focused. The keystroke write-path remains
+   in the code but dormant, and Accessibility is requested lazily (never on
+   enable), so enabling the feature triggers **no OS permission prompts**.
+3. **Appearance:** force DynamicNotchKit's `.notch` style + a dark color scheme so
+   the popup always renders as a black Dynamic Island (the `.floating` fallback
+   looked like a light notification and hid the compact state on non-notch
+   displays).
+4. **Live-activity:** the horizontal compact state now reliably shows (no longer
+   buried under constant prompts) with a pulsing "coding active" animation.
+
+The sections below are the original design and are kept for context.
 
 ## Summary
 
