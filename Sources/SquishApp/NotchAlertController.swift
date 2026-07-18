@@ -12,14 +12,24 @@ final class NotchAlertController {
     private var notch: AlertNotch?
     private var presentationTask: Task<Void, Never>?
 
+    /// Called just before an alert takes over the notch, so another notch (e.g.
+    /// live chats) can step aside and be replaced rather than overlaid.
+    var onWillShow: (() -> Void)?
+    /// Called once the alert has fully hidden and nothing is replacing it.
+    var onDidHide: (() -> Void)?
+
     private init() {}
 
     func show(session: CodingSession, threshold: Double, isPreview: Bool = false) {
         presentationTask?.cancel()
+        onWillShow?()
 
         let previousNotch = notch
-        let nextNotch = AlertNotch {
-            AnyView(NotchAlertView(session: session, threshold: threshold, isPreview: isPreview))
+        let nextNotch = AlertNotch(style: .notch) {
+            AnyView(
+                NotchAlertView(session: session, threshold: threshold, isPreview: isPreview)
+                    .environment(\.colorScheme, .dark)
+            )
         }
         notch = nextNotch
 
@@ -35,12 +45,16 @@ final class NotchAlertController {
             do {
                 try await Task.sleep(for: .seconds(isPreview ? 5 : 10))
             } catch {
-                await nextNotch.hide()
+                // Cancelled because a newer alert is replacing this one; that
+                // newer show() already fired onWillShow, so don't resume here.
                 return
             }
 
             await nextNotch.hide()
-            if self?.notch === nextNotch { self?.notch = nil }
+            if self?.notch === nextNotch {
+                self?.notch = nil
+                self?.onDidHide?()
+            }
         }
     }
 }

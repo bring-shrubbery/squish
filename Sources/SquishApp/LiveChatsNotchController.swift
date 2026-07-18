@@ -17,6 +17,7 @@ final class LiveChatsNotchController {
     private let model = LiveChatsModel()
     private var notch: Notch?
     private var panelRequested = false
+    private var suspended = false
     private var desiredState: DesiredState = .hidden
     private var transitionTask: Task<Void, Never>?
 
@@ -52,9 +53,27 @@ final class LiveChatsNotchController {
         reevaluate()
     }
 
+    /// Temporarily hide the live-chats notch so a compact alert can replace it.
+    func suspend() {
+        guard !suspended else { return }
+        suspended = true
+        transition(to: .hidden)
+    }
+
+    /// Restore the live-chats notch after a compact alert finishes.
+    func resume() {
+        guard suspended else { return }
+        suspended = false
+        reevaluate()
+    }
+
     // MARK: - State machine
 
     private func reevaluate() {
+        if suspended {
+            transition(to: .hidden)
+            return
+        }
         if !model.pending.isEmpty {
             model.mode = .prompt
             if model.selectedTabID == nil || !model.pending.contains(where: { $0.id == model.selectedTabID }) {

@@ -104,6 +104,11 @@ final class AppState: ObservableObject {
             }
         )
 
+        // A compact alert temporarily replaces the live-chats notch instead of
+        // overlaying it: hide live chats while the alert shows, restore it after.
+        NotchAlertController.shared.onWillShow = { [weak self] in self?.liveChatsNotch.suspend() }
+        NotchAlertController.shared.onDidHide = { [weak self] in self?.liveChatsNotch.resume() }
+
         restoreFolder()
         applyLiveChatsState()
     }
