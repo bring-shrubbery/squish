@@ -1,0 +1,25 @@
+# Squish
+
+> A local macOS app that watches your coding-agent sessions (Codex, Claude Code and, best effort, Gemini CLI) in a folder you choose. It shows per-session token use and API-equivalent cost, warns you in the notch before a session's context fills up, and lets you answer Claude Code permission prompts and questions from a Dynamic-Island-style notch. Everything is parsed on the Mac; nothing is uploaded.
+
+Squish is a free, open-source (Apache-2.0) app by Quassum for macOS 14 (Sonoma) and later on Apple silicon.
+
+## Key facts
+
+- Platform: macOS 14 (Sonoma) or later, Apple silicon.
+- Price: free. Code under Apache-2.0.
+- Agents: Codex (~/.codex/sessions), Claude Code (~/.claude/projects), Gemini CLI (~/.gemini/tmp, best effort). Sessions are matched to the chosen folder by their working directory, including nested projects.
+- Costs: per-session input, cache-read, cache-write and output tokens priced at API rates, including long-context tiers; a durable ledger keeps totals after the agents delete their logs; per-day buckets. These are API-equivalent estimates; subscription billing differs.
+- Compact alerts: a dark notch popup when a session's context passes a threshold (default 80%, adjustable 50 to 95%); re-arms after the session compacts.
+- Live chats (optional): active agent sessions in the notch; Claude Code permission requests and AskUserQuestion prompts can be answered from the notch through a PermissionRequest hook (squish-hook) that Squish adds to ~/.claude/settings.json and removes when the feature is turned off. The hook does nothing unless Squish is running and watching that session's folder.
+- Privacy: session logs are read locally; no session content is uploaded. Network use is limited to update checks.
+- Updates: automatic in-app updates through Sparkle; every release is a signed, notarized disk image on GitHub Releases.
+
+## Links
+
+- [Website](https://squish.quassum.com/): download and overview
+- [Latest release](https://github.com/bring-shrubbery/squish/releases/latest): the .dmg and release notes
+- [Source code](https://github.com/bring-shrubbery/squish): GitHub repository, README, build instructions
+- [Discussions](https://github.com/bring-shrubbery/squish/discussions): feature requests and questions
+- [Issues](https://github.com/bring-shrubbery/squish/issues): bug reports
+- [Quassum](https://quassum.com/): the studio behind Squish

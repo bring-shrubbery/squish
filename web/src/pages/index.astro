@@ -1,0 +1,301 @@
+---
+import Base from '../layouts/Base.astro';
+import Download from '../components/Download.astro';
+import { Image } from 'astro:assets';
+import icon from '../assets/icon.png';
+import { fetchLatestRelease } from '../lib/release';
+
+// Workers Builds share egress addresses; an optional token lifts the per-address limit.
+// import.meta.env carries the build environment here (verified: a process env var is seen).
+const release = await fetchLatestRelease(fetch, import.meta.env.GITHUB_TOKEN);
+const repo = 'https://github.com/bring-shrubbery/squish';
+const site = 'https://squish.quassum.com';
+const title = 'Squish: Token Costs and Context Alerts for Codex and Claude Code on Mac';
+const description =
+  'Free, open-source Mac app that tracks token use and API-equivalent cost of your Codex, Claude Code and Gemini CLI sessions, warns you in the notch before context compacts, and answers Claude Code prompts. Runs locally.';
+
+// The FAQ, rendered as a section and as FAQPage structured data. Plain text only:
+// answer engines quote it, so every sentence must hold without the page around it.
+const faq: { q: string; a: string }[] = [
+  {
+    q: 'Is Squish free?',
+    a: 'Yes. Squish is free and open source under the Apache License 2.0.',
+  },
+  {
+    q: 'Does it upload my sessions anywhere?',
+    a: 'No. Squish reads the session logs your coding agents already write to disk and parses them on your Mac. No session content is uploaded, and it works offline. The only network use is checking for app updates.',
+  },
+  {
+    q: 'Which coding agents does it support?',
+    a: 'Codex (from ~/.codex/sessions) and Claude Code (from ~/.claude/projects) are fully supported. Gemini CLI (from ~/.gemini/tmp) is supported on a best-effort basis. Answering prompts from the notch works for Claude Code only; Codex and Gemini CLI sessions show up as active chats but are answered in their own terminal.',
+  },
+  {
+    q: 'Which Macs does it run on?',
+    a: 'macOS 14 (Sonoma) or later on Apple silicon. The notch popups appear at the top of the screen on any Mac, with or without a camera notch.',
+  },
+  {
+    q: 'Are the costs what I actually pay?',
+    a: 'They are API-equivalent estimates: what the same tokens would cost at the providers\' published API prices, split into input, cache-read, cache-write and output, with long-context tiers where providers use them. Subscription plans for Codex, Claude or Gemini bill differently. Models without a known price stay visible but are left out of the totals.',
+  },
+  {
+    q: 'What happens to my cost history when an agent deletes old logs?',
+    a: 'Squish keeps a durable cost ledger for each project folder, so totals survive after the source session logs are gone. Completed days are frozen; only the current day updates live.',
+  },
+  {
+    q: 'What does the Claude Code hook install?',
+    a: 'Only when you turn on Live chats, Squish adds one PermissionRequest hook to ~/.claude/settings.json that runs the squish-hook program bundled inside the app, after backing up the original file once to settings.json.squish-backup. Your other hooks are left untouched, and turning Live chats off removes the entry again. The hook does nothing unless Squish is running and watching the folder the Claude Code session is in; otherwise Claude Code shows its usual prompt. If you do not answer in the notch within five minutes, the hook also falls back to Claude Code\'s own prompt.',
+  },
+  {
+    q: 'Does Squish need Accessibility access?',
+    a: 'Not for approving or denying permissions, and turning on Live chats triggers no system prompts. macOS asks for Accessibility only the first time you send an answer to a Claude Code question, because Squish types that answer into the session\'s terminal. Without it, the answer is copied to the clipboard instead.',
+  },
+  {
+    q: 'How do updates work?',
+    a: 'Squish checks for updates automatically through Sparkle and installs them after asking; you can also choose Check for Updates in the Squish menu. Every release is a signed, notarized build published on GitHub Releases, and each update is verified against Squish\'s signing key before it is installed.',
+  },
+  {
+    q: 'Can I request a feature or report a bug?',
+    a: "Ideas and questions go to GitHub Discussions; reproduced bugs go to Issues using the template. Pull requests aren't accepted.",
+  },
+];
+
+// Structured data: the app, its publisher, and the download. Search engines use it for the
+// software rich result; answer engines quote it. Version fields follow the release fetch.
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': 'https://quassum.com/#organization',
+      name: 'Quassum',
+      url: 'https://quassum.com',
+    },
+    {
+      '@type': 'Person',
+      '@id': 'https://github.com/bring-shrubbery#person',
+      name: 'Antoni Silvestrovic',
+      url: 'https://github.com/bring-shrubbery',
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${site}/#website`,
+      url: `${site}/`,
+      name: 'Squish',
+      publisher: { '@id': 'https://quassum.com/#organization' },
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': `${site}/#app`,
+      name: 'Squish',
+      url: `${site}/`,
+      description,
+      applicationCategory: 'DeveloperApplication',
+      applicationSubCategory: 'Coding agent session monitor',
+      operatingSystem: 'macOS 14 or later (Apple silicon)',
+      image: `${site}/icon.png`,
+      license: 'https://www.apache.org/licenses/LICENSE-2.0',
+      isAccessibleForFree: true,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      author: { '@id': 'https://github.com/bring-shrubbery#person' },
+      publisher: { '@id': 'https://quassum.com/#organization' },
+      sameAs: [repo],
+      featureList: [
+        'Automatic discovery of Codex, Claude Code and Gemini CLI sessions in a chosen folder',
+        'Per-session token and API-equivalent cost breakdowns',
+        'Durable cost ledger with per-day buckets',
+        'Dynamic-Island-style notch alerts before a session compacts',
+        'Live agent chats in the notch',
+        'Answer Claude Code permission requests and questions from the notch',
+        'Local parsing only; no session content is uploaded',
+      ],
+      ...(release
+        ? {
+            softwareVersion: release.version.replace(/^v/, ''),
+            downloadUrl: release.dmgURL,
+            releaseNotes: release.notesURL,
+          }
+        : { downloadUrl: `${repo}/releases/latest` }),
+    },
+    {
+      '@type': 'FAQPage',
+      '@id': `${site}/#faq`,
+      mainEntity: faq.map(({ q, a }) => ({
+        '@type': 'Question',
+        name: q,
+        acceptedAnswer: { '@type': 'Answer', text: a },
+      })),
+    },
+  ],
+};
+---
+<Base title={title} description={description} structuredData={structuredData}>
+  <main>
+    <a class="github" href={repo} aria-label="Squish on GitHub">
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+      </svg>
+    </a>
+    <section class="hero">
+      <Image class="icon" src={icon} width={96} height={96} densities={[1, 2]} alt="" loading="eager" />
+      <h1>Squish <span class="subtitle">Watch your coding agents from the notch</span></h1>
+      <p class="lead">
+        See what every Codex and Claude Code session costs, get a heads-up before its context
+        compacts, and answer Claude Code's prompts without hunting for the right terminal.
+        Everything is read <strong>locally</strong>, on your Mac.
+      </p>
+      <Download release={release} />
+
+      <figure class="stage" aria-label="Illustration: a Squish compact alert hanging from the top of the screen">
+        <div class="menubar" aria-hidden="true">
+          <span class="apple"></span><span>Squish</span><span>File</span><span>Edit</span><span>View</span>
+          <span class="clock">9:41</span>
+        </div>
+        <div class="island" role="img" aria-label="Compact soon, Claude Code: Refactor the session scanner, 84% context. Suggests running /compact.">
+          <div class="island-row">
+            <span class="island-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6.5L9 21v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm8 2.5a1 1 0 0 0-1 1v3.6l-1.3-1.3a1 1 0 1 0-1.4 1.4l3 3a1 1 0 0 0 1.4 0l3-3a1 1 0 1 0-1.4-1.4L13 11.1V7.5a1 1 0 0 0-1-1Z"/></svg>
+            </span>
+            <span class="island-text">
+              <span class="island-eyebrow"><b>COMPACT SOON</b> Claude Code</span>
+              <span class="island-title">Refactor the session scanner</span>
+              <span class="island-meter"><span class="bar"><span style="width: 84%"></span></span><span class="pct">84% context</span></span>
+            </span>
+            <span class="island-chip">/compact</span>
+          </div>
+        </div>
+        <figcaption>A compact alert, as Squish shows it when a session passes your threshold.</figcaption>
+      </figure>
+    </section>
+
+    <section id="what">
+      <h2>What it does</h2>
+      <ul>
+        <li><strong>Finds your agent sessions.</strong> Pick a folder once. Squish discovers Codex and Claude Code sessions, and Gemini CLI sessions on a best-effort basis, whose working directory is inside it, including nested projects.</li>
+        <li><strong>Shows what each session costs.</strong> Tokens and API-equivalent cost per session, split into input, cache reads, cache writes and output, with long-context pricing tiers where providers charge them.</li>
+        <li><strong>Keeps the totals.</strong> A durable cost ledger preserves your spend after the agents delete their old logs. Completed days are frozen; today updates live.</li>
+        <li><strong>Warns before context compacts.</strong> When a session's context passes your threshold (80% by default, adjustable from 50% to 95%), a dark Dynamic-Island-style alert drops from the top of the screen. It re-arms once the session compacts below the threshold.</li>
+        <li><strong>Puts live chats in the notch.</strong> Optionally, active sessions grow the notch sideways, and a Claude Code permission request or question drops it open so you can allow, deny or answer right there.</li>
+        <li><strong>Stays out of the way.</strong> Filesystem events wake Squish only when a log changes; growing logs are parsed from the new bytes only, large ones are streamed in bounded chunks, and parsed summaries persist between launches.</li>
+      </ul>
+    </section>
+
+    <section id="usage">
+      <h2>Usage</h2>
+      <ol>
+        <li><strong>Choose a folder.</strong> On first launch, pick the folder that holds your projects (later: <kbd>⇧⌘O</kbd>, <em>Choose Project Folder…</em>). Squish remembers it.</li>
+        <li><strong>Read the costs.</strong> Sessions appear newest first while older history indexes in the background. Each one shows its tokens, its estimated cost and how full its context is.</li>
+        <li><strong>Set the alert threshold.</strong> Under <em>Compact alerts</em>, choose when the notch alert fires, or preview it.</li>
+        <li><strong>Turn on Live chats</strong> if you want to answer Claude Code from the notch. Squish installs its hook (see below); a preview button shows what a request looks like.</li>
+      </ol>
+    </section>
+
+    <section id="live-chats">
+      <h2>Live chats and the Claude Code hook</h2>
+      <p>
+        With Live chats on, Claude Code permission prompts and <code>AskUserQuestion</code> questions open the notch
+        with one tab per waiting session. Approve or deny a tool, pick one of the offered answers, or type your own.
+      </p>
+      <div class="stage stage-compact" aria-hidden="true">
+        <div class="island island-tall">
+          <div class="island-head">
+            <span class="island-lock">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm-1.2 13.6-3.4-3.4 1.4-1.4 2 2 4.6-4.6 1.4 1.4-6 6Z"/></svg>
+            </span>
+            <b>Bash</b>
+          </div>
+          <code class="island-cmd">npm test -- --run src/lib</code>
+          <div class="island-actions">
+            <span class="deny">Deny</span><span class="allow">Allow</span>
+          </div>
+        </div>
+      </div>
+      <p>What turning it on does, and why it is safe to leave on:</p>
+      <ul>
+        <li><strong>One hook, nothing else.</strong> Squish adds a single <code>PermissionRequest</code> hook to <code>~/.claude/settings.json</code> that runs <code>squish-hook</code>, a small program bundled inside the app. It backs up the original file once (<code>settings.json.squish-backup</code>), leaves your other hooks alone, and removes the entry when you turn Live chats off.</li>
+        <li><strong>Only real prompts.</strong> <code>PermissionRequest</code> fires only when Claude Code would actually ask you, so tools your permission mode already allows never reach the notch.</li>
+        <li><strong>Never hangs a session.</strong> The hook passes straight through to Claude Code's own prompt unless Squish is running and watching the folder the session is in, and it falls back to that prompt after five minutes without an answer.</li>
+        <li><strong>No surprise permissions.</strong> Allow and deny need nothing from macOS. Accessibility is requested only the first time you send an answer to a question, so Squish can type it into the terminal; without it, the answer is copied to the clipboard.</li>
+      </ul>
+      <p class="muted">Codex and Gemini CLI sessions appear as active chats too, but are answered in their own terminal. Turn Live chats off before deleting Squish, so the hook entry is removed.</p>
+    </section>
+
+    <section id="sources">
+      <h2>Where it looks</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th scope="col">Agent</th><th scope="col">Session logs</th><th scope="col">Support</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Codex</td><td><code>~/.codex/sessions</code></td><td>Full</td></tr>
+            <tr><td>Claude Code</td><td><code>~/.claude/projects</code></td><td>Full, plus answering from the notch</td></tr>
+            <tr><td>Gemini CLI</td><td><code>~/.gemini/tmp</code></td><td>Best effort</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Squish also picks up matching local <code>.codex</code>, <code>.claude</code> and <code>.gemini</code> folders below the
+        folder you chose. It is not sandboxed, because these logs live in hidden folders in your home directory.
+      </p>
+      <div class="callout">
+        <p>
+          <strong>Costs are estimates.</strong> They use the providers' published API prices (the catalog lives in
+          <a href={`${repo}/blob/main/Sources/SquishCore/PricingCatalog.swift`}><code>PricingCatalog.swift</code></a>).
+          Codex, Claude and Gemini subscriptions bill differently, and models without a known price are shown but left out
+          of the totals.
+        </p>
+      </div>
+    </section>
+
+    <section id="faq">
+      <h2>Questions</h2>
+      <dl class="faq">
+        {faq.map(({ q, a }) => (
+          <div>
+            <dt>{q}</dt>
+            <dd>{a}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+
+    <section id="build">
+      <h2>Build from source</h2>
+      <p>Requires macOS 14 or later and Xcode with the Swift 6 toolchain.</p>
+      <pre><code>git clone https://github.com/bring-shrubbery/squish.git && cd squish && ./scripts/build-app.sh</code></pre>
+      <p>
+        The app bundle is written to <code>dist/Squish.app</code> (ad-hoc signed). During development, run
+        <code>swift run Squish</code>, and <code>swift test</code> for the tests. The
+        <a href={`${repo}#readme`}>README</a> has the details.
+      </p>
+    </section>
+
+    <section id="contributing">
+      <h2>Contributing</h2>
+      <p>Squish is developed by a small team working with AI coding agents that we run and supervise ourselves. Because of that:</p>
+      <ul>
+        <li><strong>Feature requests, ideas and questions</strong> go to <a href={`${repo}/discussions`}>Discussions</a>. The most requested and best argued ideas are what we build next.</li>
+        <li><strong>Bug reports</strong> go to <a href={`${repo}/issues`}>Issues</a>, using the template, for bugs you have reproduced yourself.</li>
+        <li><strong>Pull requests are not accepted</strong> and are closed automatically.</li>
+      </ul>
+    </section>
+
+    <section id="license">
+      <h2>License</h2>
+      <p>
+        Squish is licensed under the <a href={`${repo}/blob/main/LICENSE`}>Apache License 2.0</a>. It is published by
+        <a href="https://quassum.com">Quassum</a> and made by <a href="https://github.com/bring-shrubbery">Antoni Silvestrovic</a>,
+        built with Claude Code.
+      </p>
+    </section>
+  </main>
+  <footer>
+    <div class="inner">
+      <span>Squish</span>
+      <a href={repo}>GitHub</a>
+      <a href={`${repo}/releases`}>Releases</a>
+      <a href={`${repo}/discussions`}>Discussions</a>
+      <a href="https://quassum.com">Quassum</a>
+    </div>
+  </footer>
+</Base>
