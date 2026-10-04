@@ -5,23 +5,18 @@ import SwiftUI
 struct WorktreesView: View {
     @EnvironmentObject private var store: WorktreeStore
     @State private var flaggedOnly = false
+    // The presented values are kept after dismissal (only the flags reset), so an alert's
+    // title and message never go blank while it animates out.
     @State private var confirmation: Confirmation?
+    @State private var isConfirming = false
+    @State private var removeAnywayTarget: Worktree?
+    @State private var isConfirmingAnyway = false
     @State private var skippedAfterBulk: [Worktree] = []
 
-    private enum Confirmation: Identifiable {
+    private enum Confirmation {
         case remove(Worktree)
         case losingWork(Worktree, uncommitted: Int, unpushed: Int, detached: Bool)
-        case removeAnyway(Worktree)
         case bulk(remove: [Worktree], skipped: [Worktree])
-
-        var id: String {
-            switch self {
-            case .remove(let w): "remove-\(w.path)"
-            case .losingWork(let w, _, _, _): "losing-\(w.path)"
-            case .removeAnyway(let w): "anyway-\(w.path)"
-            case .bulk: "bulk"
-            }
-        }
     }
 
     var body: some View {
@@ -35,6 +30,7 @@ struct WorktreesView: View {
                     )
                     Spacer()
                     Button {
+                        skippedAfterBulk = []
                         store.refresh()
                     } label: {
                         Label(store.isRefreshing ? "Scanning…" : "Refresh", systemImage: "arrow.clockwise")
@@ -59,26 +55,44 @@ struct WorktreesView: View {
 
                 if !skippedAfterBulk.isEmpty {
                     notice(
-                        "Skipped \(skippedAfterBulk.count) with work in them",
-                        skippedAfterBulk.map(\.displayName).joined(separator: ", ") + ". Remove these one at a time."
+                        "Skipped \(skippedAfterBulk.count)",
+                        skippedAfterBulk.map(\.displayName).joined(separator: ", ")
+                            + ". They have work in them or changed since you confirmed. Remove these one at a time."
                     )
                 }
             }
             .padding(28)
         }
-        .onAppear { store.refresh() }
+        .onAppear {
+            skippedAfterBulk = []
+            store.refresh()
+        }
         .alert(
             Text(confirmation.map(title(for:)) ?? ""),
-            isPresented: Binding(
-                get: { confirmation != nil },
-                set: { if !$0 { confirmation = nil } }
-            ),
+            isPresented: $isConfirming,
             presenting: confirmation
         ) { confirmation in
             buttons(for: confirmation)
         } message: { confirmation in
             Text(message(for: confirmation))
         }
+        // The second confirmation for losing work: its own alert, so presenting it cannot be
+        // dropped while the first one is still animating out.
+        .alert(
+            Text(removeAnywayTarget.map { "Remove \($0.displayName) anyway?" } ?? ""),
+            isPresented: $isConfirmingAnyway,
+            presenting: removeAnywayTarget
+        ) { worktree in
+            Button("Remove anyway", role: .destructive) { Task { await store.remove(worktree, force: true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This cannot be undone.")
+        }
+    }
+
+    private func confirm(_ value: Confirmation) {
+        confirmation = value
+        isConfirming = true
     }
 
     // MARK: - Header
@@ -103,9 +117,9 @@ struct WorktreesView: View {
                 .font(.system(size: 12, weight: .medium))
             Button("Remove flagged") {
                 let preview = store.bulkPreview()
-                confirmation = .bulk(remove: preview.remove, skipped: preview.skipped)
+                confirm(.bulk(remove: preview.remove, skipped: preview.skipped))
             }
-            .disabled(store.flaggedCount == 0 || store.isRemoving)
+            .disabled(store.bulkPreview().remove.isEmpty || store.isRemoving)
         }
         .padding(18)
         .appCard()
@@ -207,6 +221,9 @@ struct WorktreesView: View {
                     }
                     if worktree.isLocked { chip("Locked", .secondary) }
                     if worktree.isPrunable { chip("Missing", AppColors.coral) }
+                    ForEach(flagLabels(flags), id: \.self) { label in
+                        chip(label, AppColors.amber)
+                    }
                 }
                 Text(worktree.path)
                     .font(.system(size: 11))
@@ -262,11 +279,11 @@ struct WorktreesView: View {
     private func removeButton(_ worktree: Worktree) -> some View {
         switch store.removal(for: worktree) {
         case .confirm:
-            Button("Remove") { confirmation = .remove(worktree) }
+            Button("Remove") { confirm(.remove(worktree)) }
                 .disabled(store.isRemoving)
         case let .confirmLosingWork(uncommitted, unpushed, detached):
             Button("Remove") {
-                confirmation = .losingWork(worktree, uncommitted: uncommitted, unpushed: unpushed, detached: detached)
+                confirm(.losingWork(worktree, uncommitted: uncommitted, unpushed: unpushed, detached: detached))
             }
             .disabled(store.isRemoving)
         case .blocked(let reason):
@@ -288,8 +305,6 @@ struct WorktreesView: View {
             "Remove \(worktree.displayName)\(sizeSuffix(worktree))?"
         case .losingWork(let worktree, _, _, _):
             "\(worktree.displayName) has work that exists nowhere else"
-        case .removeAnyway(let worktree):
-            "Remove \(worktree.displayName) anyway?"
         case let .bulk(remove, _):
             "Remove \(remove.count) flagged worktrees (\(Self.bytes(remove.compactMap(\.sizeBytes).reduce(0, +))))?"
         }
@@ -301,8 +316,6 @@ struct WorktreesView: View {
             branchKeptText(worktree)
         case let .losingWork(worktree, uncommitted, unpushed, detached):
             lossText(worktree, uncommitted: uncommitted, unpushed: unpushed, detached: detached)
-        case .removeAnyway:
-            "This cannot be undone."
         case let .bulk(remove, skipped):
             remove.map(\.displayName).joined(separator: ", ") + ". Their branches are kept."
                 + (skipped.isEmpty ? "" : " \(skipped.count) with work in them will be skipped.")
@@ -316,13 +329,13 @@ struct WorktreesView: View {
             Button("Remove", role: .destructive) { Task { await store.remove(worktree, force: false) } }
         case .losingWork(let worktree, _, _, _):
             Button("Continue…", role: .destructive) {
-                // A second, separate confirmation, presented after this alert has closed.
-                DispatchQueue.main.async { self.confirmation = .removeAnyway(worktree) }
+                removeAnywayTarget = worktree
+                isConfirmingAnyway = true
             }
-        case .removeAnyway(let worktree):
-            Button("Remove anyway", role: .destructive) { Task { await store.remove(worktree, force: true) } }
-        case .bulk:
-            Button("Remove", role: .destructive) { Task { skippedAfterBulk = await store.removeFlagged() } }
+        case let .bulk(remove, skipped):
+            Button("Remove", role: .destructive) {
+                Task { skippedAfterBulk = skipped + (await store.removeFlagged(remove)) }
+            }
         }
         Button("Cancel", role: .cancel) {}
     }
@@ -349,6 +362,15 @@ struct WorktreesView: View {
     }
 
     // MARK: - Helpers
+
+    private func flagLabels(_ flags: [WorktreeFlag]) -> [String] {
+        flags.map { flag in
+            switch flag {
+            case .age: "Older than \(store.thresholds.maxAgeDays) days"
+            case .size: "Larger than \(store.thresholds.maxSizeBytes / 1_000_000_000) GB"
+            }
+        }
+    }
 
     private func sizeSuffix(_ worktree: Worktree) -> String {
         worktree.sizeBytes.map { " (\(Self.bytes($0)))" } ?? ""

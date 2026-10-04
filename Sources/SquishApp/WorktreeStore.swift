@@ -14,6 +14,9 @@ final class WorktreeStore: ObservableObject {
     @Published private(set) var lastReclaimed: Int64?
     /// True while any remove or prune runs; the view disables removal controls meanwhile.
     @Published private(set) var isRemoving = false
+    /// Normalized paths of sessions active in the last few minutes; published so rows re-render
+    /// (and Remove re-gates) when a session starts in a worktree.
+    @Published private(set) var activeSessionPaths: [String] = []
     @Published var thresholds: WorktreeThresholds {
         didSet {
             defaults.set(thresholds.maxAgeDays, forKey: Keys.maxAgeDays)
@@ -57,16 +60,14 @@ final class WorktreeStore: ObservableObject {
         let rootChanged = root?.standardizedFileURL != self.root?.standardizedFileURL
         self.root = root
         self.sessions = sessions
+        let paths = WorktreePolicy.liveSessionPaths(sessions, now: Date())
+        if paths != activeSessionPaths { activeSessionPaths = paths }
         if rootChanged {
             sizingTask?.cancel()
             scans = []
             sizes = [:]
             refresh()
         }
-    }
-
-    var activeSessionPaths: [String] {
-        WorktreePolicy.liveSessionPaths(sessions, now: Date())
     }
 
     var worktrees: [Worktree] {
@@ -143,13 +144,39 @@ final class WorktreeStore: ObservableObject {
         }
     }
 
-    /// Removes one worktree; returns the bytes it freed, or nil when git refused.
+    /// The latest scanned state of a worktree, so safety checks never run on a stale copy.
+    private func current(_ worktree: Worktree) -> Worktree? {
+        scans.lazy.flatMap(\.worktrees).first { $0.path == worktree.path }
+    }
+
+    /// Removes one worktree; returns the bytes it freed, or nil when git refused or the
+    /// worktree is no longer safe to remove this way. Does nothing while another removal runs.
     @discardableResult
     func remove(_ worktree: Worktree, force: Bool) async -> Int64? {
-        await remove(worktree, force: force, showsReclaimed: true)
+        guard !isRemoving else { return nil }
+        return await remove(worktree, force: force, showsReclaimed: true)
     }
 
     private func remove(_ worktree: Worktree, force: Bool, showsReclaimed: Bool) async -> Int64? {
+        guard let latest = current(worktree) else {
+            rowErrors[worktree.path] = "This worktree is no longer listed. Refresh and try again."
+            return nil
+        }
+        switch removal(for: latest) {
+        case .confirm:
+            break
+        case .confirmLosingWork:
+            guard force else {
+                rowErrors[worktree.path] = "This worktree now has work in it. Remove it again to review what would be lost."
+                return nil
+            }
+        case .blocked(let reason):
+            rowErrors[worktree.path] = reason
+            return nil
+        case .pruneOnly:
+            rowErrors[worktree.path] = "The directory is gone; use Prune instead."
+            return nil
+        }
         removalDepth += 1
         defer { removalDepth -= 1 }
         let git = scanner.git
@@ -177,6 +204,11 @@ final class WorktreeStore: ObservableObject {
     }
 
     func prune(_ worktree: Worktree) async {
+        guard !isRemoving else { return }
+        guard let latest = current(worktree), removal(for: latest) == .pruneOnly else {
+            rowErrors[worktree.path] = "The directory exists again; it can no longer be pruned."
+            return
+        }
         removalDepth += 1
         defer { removalDepth -= 1 }
         let git = scanner.git
@@ -192,14 +224,24 @@ final class WorktreeStore: ObservableObject {
         await rescan(repo: worktree.repoPath)
     }
 
-    /// Removes every clean flagged worktree; returns the flagged ones it skipped.
-    func removeFlagged() async -> [Worktree] {
+    /// Removes exactly the given worktrees (the list the user confirmed), each only if it is
+    /// still clean and removable; returns the ones it skipped.
+    func removeFlagged(_ worktrees: [Worktree]) async -> [Worktree] {
+        guard !isRemoving else { return worktrees }
         removalDepth += 1
         defer { removalDepth -= 1 }
-        let (remove, skipped) = bulkPreview()
+        var skipped: [Worktree] = []
         var total: Int64 = 0
-        for worktree in remove {
-            if let freed = await self.remove(worktree, force: false, showsReclaimed: false) { total += freed }
+        for worktree in worktrees {
+            guard let latest = current(worktree), removal(for: latest) == .confirm else {
+                skipped.append(worktree)
+                continue
+            }
+            if let freed = await self.remove(worktree, force: false, showsReclaimed: false) {
+                total += freed
+            } else {
+                skipped.append(worktree)
+            }
         }
         showReclaimed(total)
         return skipped
