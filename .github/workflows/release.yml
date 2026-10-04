@@ -218,6 +218,9 @@ jobs:
           xcrun stapler staple "$APP"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
           ditto -c -k --keepParent "$APP" "dist/Squish-$TAG-macos-arm64.zip"
+          # A fixed-name copy: releases/latest/download/Squish-macos-arm64.dmg always serves the
+          # newest version, so the website's download link never needs a rebuild.
+          cp "$DMG" dist/Squish-macos-arm64.dmg
 
       - name: Sign the update and write the appcast
         env:
@@ -275,6 +278,7 @@ jobs:
           path: |
             dist/Squish-${{ env.TAG }}-macos-arm64.dmg
             dist/Squish-${{ env.TAG }}-macos-arm64.zip
+            dist/Squish-macos-arm64.dmg
             dist/appcast.xml
           if-no-files-found: error
 
@@ -300,6 +304,7 @@ jobs:
           files: |
             dist/Squish-${{ env.TAG }}-macos-arm64.dmg
             dist/Squish-${{ env.TAG }}-macos-arm64.zip
+            dist/Squish-macos-arm64.dmg
             dist/appcast.xml
 
       - name: Rebuild the website
