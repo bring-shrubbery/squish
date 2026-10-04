@@ -123,4 +123,51 @@ final class ProcessGitClientTests: XCTestCase {
             guard case .timedOut = error as? GitError else { return XCTFail("expected timeout, got \(error)") }
         }
     }
+
+    func testTimeoutKillsAChildThatIgnoresTerminate() {
+        // sh ignores SIGTERM and its sleep grandchild keeps the pipes open for 30 s.
+        let stubborn = ProcessGitClient(gitPath: "/bin/sh", timeout: 0.5)
+        let start = Date()
+        XCTAssertThrowsError(try stubborn.run(["-c", "trap '' TERM; sleep 30"], in: "/")) { error in
+            guard case .timedOut = error as? GitError else { return XCTFail("expected timeout, got \(error)") }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testNoTimeoutWaitsForCompletion() throws {
+        let slow = ProcessGitClient(gitPath: "/bin/sh", timeout: 0.2)
+        XCTAssertEqual(try slow.run(["-c", "sleep 1; echo done"], in: "/", timeout: nil), "done\n")
+    }
+
+    func testIgnoresInheritedRepoOverrides() throws {
+        let fixture = try GitFixture()
+        let feature = try fixture.addWorktree("feature")
+        // A tracked file: with a bogus index git would report it deleted and untracked.
+        try fixture.write("code", to: "main.swift", in: feature)
+        try fixture.run(["add", "main.swift"], in: feature)
+        try fixture.run(["commit", "-q", "-m", "code"], in: feature)
+        try fixture.write("draft", to: "notes.txt", in: feature)
+        let previous = getenv("GIT_INDEX_FILE").map { String(cString: $0) }
+        setenv("GIT_INDEX_FILE", "/nonexistent/squish/index", 1)
+        defer {
+            if let previous { setenv("GIT_INDEX_FILE", previous, 1) } else { unsetenv("GIT_INDEX_FILE") }
+        }
+        XCTAssertEqual(try git.uncommittedCount(worktree: feature.path), 1)
+    }
+
+    func testUnparseableUnpushedCountThrows() {
+        let echo = ProcessGitClient(gitPath: "/bin/echo")
+        XCTAssertThrowsError(try echo.unpushedCount(worktree: "/", branch: "feature")) { error in
+            guard case .failed = error as? GitError else { return XCTFail("expected failure, got \(error)") }
+        }
+    }
+
+    func testCreateBranchAtCommitAndRefusesTakenName() throws {
+        let fixture = try GitFixture()
+        let head = try fixture.run(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try git.createBranch(name: "squish/rescued-x", at: head, repo: fixture.repo.path)
+        let tip = try fixture.run(["rev-parse", "squish/rescued-x"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(tip, head)
+        XCTAssertThrowsError(try git.createBranch(name: "squish/rescued-x", at: head, repo: fixture.repo.path))
+    }
 }

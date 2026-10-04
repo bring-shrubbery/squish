@@ -24,6 +24,7 @@ private struct FakeGit: GitClient {
     }
     func remove(worktree: String, repo: String, force: Bool) throws {}
     func prune(repo: String) throws {}
+    func createBranch(name: String, at sha: String, repo: String) throws {}
 }
 
 final class WorktreeScannerTests: XCTestCase {

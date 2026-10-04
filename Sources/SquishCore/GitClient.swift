@@ -28,6 +28,8 @@ public protocol GitClient: Sendable {
     func mainRepoRoot(containing path: String) throws -> String?
     func remove(worktree: String, repo: String, force: Bool) throws
     func prune(repo: String) throws
+    /// Creates branch `name` at commit `sha`; throws if the name is taken.
+    func createBranch(name: String, at sha: String, repo: String) throws
 }
 
 public struct ProcessGitClient: GitClient {
@@ -54,7 +56,11 @@ public struct ProcessGitClient: GitClient {
         if let branch { arguments.append("--exclude=\(branch)") }
         arguments += ["--branches", "--remotes"]
         let output = try run(arguments, in: worktree).trimmingCharacters(in: .whitespacesAndNewlines)
-        return Int(output) ?? 0
+        // Never read garbage as "nothing unpushed": that would let work be deleted unconfirmed.
+        guard let count = Int(output) else {
+            throw GitError.failed(message: "git rev-list printed an unexpected count: \(output)")
+        }
+        return count
     }
 
     public func lastActivity(worktree: String) throws -> Date? {
@@ -80,18 +86,39 @@ public struct ProcessGitClient: GitClient {
         return WorktreePolicy.normalized(commonDir.deletingLastPathComponent().path)
     }
 
+    // Destructive commands run without a timeout: killing one midway could leave a
+    // half-deleted worktree.
     public func remove(worktree: String, repo: String, force: Bool) throws {
-        try run(["worktree", "remove"] + (force ? ["--force"] : []) + [worktree], in: repo)
+        try run(["worktree", "remove"] + (force ? ["--force"] : []) + [worktree], in: repo, timeout: nil)
     }
 
     public func prune(repo: String) throws {
-        try run(["worktree", "prune"], in: repo)
+        try run(["worktree", "prune"], in: repo, timeout: nil)
     }
 
-    /// Runs git in `directory` and returns stdout. stdout and stderr are drained concurrently so
-    /// large output cannot fill a pipe and stall the child.
+    public func createBranch(name: String, at sha: String, repo: String) throws {
+        try run(["branch", name, sha], in: repo)
+    }
+
+    /// Variables that would point git at another repo, index or object store than the
+    /// directory it runs in (set when Squish is launched from a git hook or a git-aware shell).
+    static let repoOverrideVariables = [
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"
+    ]
+
+    /// Runs git in `directory` with the client's read timeout and returns stdout.
     @discardableResult
     func run(_ arguments: [String], in directory: String) throws -> String {
+        try run(arguments, in: directory, timeout: timeout)
+    }
+
+    /// Runs git in `directory` and returns stdout; `timeout: nil` waits for as long as git takes.
+    /// stdout and stderr are drained concurrently so large output cannot fill a pipe and stall
+    /// the child. On timeout git gets SIGTERM, then SIGKILL after 2 s, and the readers stop even
+    /// if a grandchild still holds the pipes open.
+    @discardableResult
+    func run(_ arguments: [String], in directory: String, timeout: TimeInterval?) throws -> String {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw GitError.failed(message: "No such directory: \(directory)")
@@ -101,6 +128,7 @@ public struct ProcessGitClient: GitClient {
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
         var environment = ProcessInfo.processInfo.environment
+        for name in Self.repoOverrideVariables { environment[name] = nil }
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["LC_ALL"] = "C"
@@ -110,6 +138,8 @@ public struct ProcessGitClient: GitClient {
         process.standardOutput = stdout
         process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
 
         do {
             try process.run()
@@ -119,25 +149,33 @@ public struct ProcessGitClient: GitClient {
 
         let outBox = DataBox()
         let errBox = DataBox()
+        let stop = StopFlag()
         let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            outBox.data = stdout.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            errBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
+        for (pipe, box) in [(stdout, outBox), (stderr, errBox)] {
+            group.enter()
+            let descriptor = pipe.fileHandleForReading.fileDescriptor
+            DispatchQueue.global(qos: .utility).async {
+                box.data = Self.drain(descriptor, until: stop)
+                group.leave()
+            }
         }
 
-        if group.wait(timeout: .now() + timeout) == .timedOut {
+        let deadline: DispatchTime = timeout.map { .now() + $0 } ?? .distantFuture
+        let finished = group.wait(timeout: deadline) == .success && exited.wait(timeout: deadline) == .success
+        if !finished {
             process.terminate()
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                exited.wait()
+            }
+            stop.set()
             group.wait()
-            process.waitUntilExit()
+            try? stdout.fileHandleForReading.close()
+            try? stderr.fileHandleForReading.close()
             throw GitError.timedOut(command: arguments.first ?? "")
         }
-        process.waitUntilExit()
+        try? stdout.fileHandleForReading.close()
+        try? stderr.fileHandleForReading.close()
 
         let errorText = String(decoding: errBox.data, as: UTF8.self)
         guard process.terminationStatus == 0 else {
@@ -147,6 +185,49 @@ public struct ProcessGitClient: GitClient {
             throw GitError.failed(message: message.isEmpty ? "git \(arguments.first ?? "") failed" : message)
         }
         return String(decoding: outBox.data, as: UTF8.self)
+    }
+
+    /// Reads `descriptor` to end of file, polling so `stop` can end the read even while
+    /// another process keeps the write end open.
+    private static func drain(_ descriptor: Int32, until stop: StopFlag) -> Data {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        var poller = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        while !stop.isSet {
+            let ready = poll(&poller, 1, 100)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            if ready == 0 { continue }
+            let count = buffer.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+            if count > 0 {
+                data.append(contentsOf: buffer[0..<count])
+            } else if count < 0, errno == EINTR || errno == EAGAIN {
+                continue
+            } else {
+                break
+            }
+        }
+        return data
+    }
+}
+
+/// Set once by the timing-out caller, read by the reader loops.
+private final class StopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set() {
+        lock.lock()
+        value = true
+        lock.unlock()
     }
 }
 
