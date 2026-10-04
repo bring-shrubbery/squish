@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Swift tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select the newest installed Xcode
+        run: |
+          # shellcheck disable=SC2012
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+      - name: swift test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tail -30
+
+  app-build:
+    name: Build the app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select the newest installed Xcode
+        run: |
+          # shellcheck disable=SC2012
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+      # The release build signs with the Developer ID; here the bundle is signed ad hoc, so
+      # this checks the packaging (Sparkle embedded, rpath, inside-out signing) on every push.
+      - name: Build the bundle (ad hoc)
+        run: |
+          set -o pipefail
+          ./scripts/build-app.sh 2>&1 | tee build.log | tail -30
+      - name: Fail on warnings in our own sources
+        run: |
+          if grep -E "/Sources/Squish[A-Za-z]*/.*warning:" build.log; then
+            echo "::error::warnings in Squish sources"; exit 1
+          fi
+          echo "no warnings in Squish sources"
+      - name: Check the bundle
+        run: |
+          APP=dist/Squish.app
+          test -x "$APP/Contents/MacOS/squish-hook"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          otool -l "$APP/Contents/MacOS/Squish" | grep -q "@executable_path/../Frameworks"
+          plutil -lint "$APP/Contents/Info.plist"
+          for key in SUFeedURL SUPublicEDKey; do
+            /usr/libexec/PlistBuddy -c "Print :$key" "$APP/Contents/Info.plist"
+          done
+
+  scripts:
+    name: Release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install xmllint
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils
+      - name: Run the script tests
+        run: |
+          for test in scripts/release-*-test.sh; do
+            echo "== $test"
+            "$test"
+          done
+
+  web:
+    name: Website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
