@@ -165,16 +165,29 @@ public enum CompactAlertPolicy {
     ) -> Bool {
         guard monitoringIsEstablished,
               !current.isSubagent,
-              current.contextFraction >= threshold,
-              let currentMessageDate = current.lastUserMessageAt else { return false }
+              current.contextFraction >= threshold else { return false }
 
-        if let previousMessageDate = previous?.lastUserMessageAt,
-           currentMessageDate <= previousMessageDate {
-            return false
+        let hasFreshUserMessage: Bool
+        if let currentMessageDate = current.lastUserMessageAt {
+            let isNewMessage = previous?.lastUserMessageAt.map { currentMessageDate > $0 } ?? true
+            let messageAge = now.timeIntervalSince(currentMessageDate)
+            hasFreshUserMessage = isNewMessage && messageAge >= -5 && messageAge < 120
+        } else {
+            hasFreshUserMessage = false
         }
 
-        let messageAge = now.timeIntervalSince(currentMessageDate)
-        guard messageAge >= -5, messageAge < 120 else { return false }
+        let hasFreshContextGrowth: Bool
+        if let previous {
+            let updateAge = now.timeIntervalSince(current.updatedAt)
+            hasFreshContextGrowth = current.contextTokens > previous.contextTokens
+                && current.updatedAt > previous.updatedAt
+                && updateAge >= -5
+                && updateAge < 300
+        } else {
+            hasFreshContextGrowth = false
+        }
+
+        guard hasFreshUserMessage || hasFreshContextGrowth else { return false }
         return isArmed || !hasAlerted
     }
 }
