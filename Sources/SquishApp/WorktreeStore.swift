@@ -12,6 +12,8 @@ final class WorktreeStore: ObservableObject {
     @Published private(set) var gitUnavailable = false
     @Published private(set) var rowErrors: [String: String] = [:]
     @Published private(set) var lastReclaimed: Int64?
+    /// True while any remove or prune runs; the view disables removal controls meanwhile.
+    @Published private(set) var isRemoving = false
     @Published var thresholds: WorktreeThresholds {
         didSet {
             defaults.set(thresholds.maxAgeDays, forKey: Keys.maxAgeDays)
@@ -32,6 +34,10 @@ final class WorktreeStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var sizingTask: Task<Void, Never>?
     private var timer: Timer?
+    /// Nesting depth of removal operations, so a bulk run's inner removes keep `isRemoving` set.
+    private var removalDepth = 0 {
+        didSet { isRemoving = removalDepth > 0 }
+    }
 
     init(scanner: WorktreeScanner = WorktreeScanner(), defaults: UserDefaults = .standard) {
         self.scanner = scanner
@@ -52,6 +58,7 @@ final class WorktreeStore: ObservableObject {
         self.root = root
         self.sessions = sessions
         if rootChanged {
+            sizingTask?.cancel()
             scans = []
             sizes = [:]
             refresh()
@@ -101,6 +108,7 @@ final class WorktreeStore: ObservableObject {
         isRefreshing = true
         let scanner = self.scanner
         let sessionPaths = sessions.map(\.projectPath)
+        let scannedRoot = root.standardizedFileURL
         refreshTask = Task {
             let result = await Task.detached(priority: .utility) { () -> Result<[RepoScan], GitError> in
                 do {
@@ -112,6 +120,13 @@ final class WorktreeStore: ObservableObject {
                     return .failure(.failed(message: error.localizedDescription))
                 }
             }.value
+            // The watched folder changed mid-scan: drop the old folder's result and scan the new one.
+            guard self.root?.standardizedFileURL == scannedRoot else {
+                isRefreshing = false
+                refreshTask = nil
+                refresh()
+                return
+            }
             switch result {
             case .success(let scans):
                 self.scans = scans
@@ -131,6 +146,12 @@ final class WorktreeStore: ObservableObject {
     /// Removes one worktree; returns the bytes it freed, or nil when git refused.
     @discardableResult
     func remove(_ worktree: Worktree, force: Bool) async -> Int64? {
+        await remove(worktree, force: force, showsReclaimed: true)
+    }
+
+    private func remove(_ worktree: Worktree, force: Bool, showsReclaimed: Bool) async -> Int64? {
+        removalDepth += 1
+        defer { removalDepth -= 1 }
         let git = scanner.git
         rowErrors[worktree.path] = nil
         let failure: String? = await Task.detached(priority: .userInitiated) {
@@ -149,13 +170,15 @@ final class WorktreeStore: ObservableObject {
         } else {
             freed = sizes[worktree.path] ?? 0
             sizes[worktree.path] = nil
-            showReclaimed(freed ?? 0)
+            if showsReclaimed { showReclaimed(freed ?? 0) }
         }
         await rescan(repo: worktree.repoPath)
         return freed
     }
 
     func prune(_ worktree: Worktree) async {
+        removalDepth += 1
+        defer { removalDepth -= 1 }
         let git = scanner.git
         let failure: String? = await Task.detached(priority: .userInitiated) {
             do {
@@ -171,10 +194,12 @@ final class WorktreeStore: ObservableObject {
 
     /// Removes every clean flagged worktree; returns the flagged ones it skipped.
     func removeFlagged() async -> [Worktree] {
+        removalDepth += 1
+        defer { removalDepth -= 1 }
         let (remove, skipped) = bulkPreview()
         var total: Int64 = 0
         for worktree in remove {
-            if let freed = await self.remove(worktree, force: false) { total += freed }
+            if let freed = await self.remove(worktree, force: false, showsReclaimed: false) { total += freed }
         }
         showReclaimed(total)
         return skipped
@@ -205,6 +230,7 @@ final class WorktreeStore: ObservableObject {
             for (path, stamp) in targets {
                 if Task.isCancelled { return }
                 let bytes = await Task.detached(priority: .utility) { sizer.size(of: path, stamp: stamp) }.value
+                if Task.isCancelled { return }
                 if let bytes {
                     sizes[path] = bytes
                     unmeasurable.remove(path)
