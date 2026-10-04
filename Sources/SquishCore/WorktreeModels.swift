@@ -93,6 +93,7 @@ public enum WorktreeRemoval: Equatable, Sendable {
 
 public enum WorktreePolicy {
     public static let liveSessionWindow: TimeInterval = 600
+    public static let activeReason = "A process or agent session is working in this worktree."
 
     /// Symlinks resolved, so `/var/…` and `/private/var/…` compare equal.
     /// Uses realpath(3), which keeps the canonical `/private/…` form git prints
@@ -151,7 +152,7 @@ public enum WorktreePolicy {
         if worktree.isPrunable { return .pruneOnly }
         if let detailError = worktree.detailError { return .blocked(reason: detailError) }
         if hasActiveSession(worktree, activeSessionPaths: activeSessionPaths) {
-            return .blocked(reason: "An agent session is working in this worktree.")
+            return .blocked(reason: WorktreePolicy.activeReason)
         }
         if worktree.isLocked {
             return .blocked(reason: "This worktree is locked. Run git worktree unlock to allow removal.")
@@ -164,6 +165,30 @@ public enum WorktreePolicy {
             )
         }
         return .confirm
+    }
+
+    /// The decision made immediately before `git worktree remove`, on counts just read from git:
+    /// nil to proceed, otherwise why to refuse. A plain removal needs a clean, idle worktree; a
+    /// forced one may lose at most what the user confirmed (`confirmedUncommitted`/`confirmedUnpushed`).
+    public static func freshRemovalCheck(
+        uncommitted: Int,
+        unpushed: Int,
+        isActive: Bool,
+        force: Bool,
+        confirmedUncommitted: Int,
+        confirmedUnpushed: Int
+    ) -> String? {
+        if isActive { return activeReason }
+        if !force {
+            guard uncommitted == 0, unpushed == 0 else {
+                return "This worktree now has work in it. Remove it again to review what would be lost."
+            }
+            return nil
+        }
+        guard uncommitted <= confirmedUncommitted, unpushed <= confirmedUnpushed else {
+            return "This worktree has more work in it than you confirmed. Remove it again to review what would be lost."
+        }
+        return nil
     }
 
     /// The flagged worktrees "Remove flagged" removes (clean ones) and skips (the rest).
