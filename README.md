@@ -1,4 +1,4 @@
-<p align="center"><img src="Sources/SquishApp/Resources/AppIcon.png" width="128" alt="Squish icon"></p>
+<img src="Sources/SquishApp/Resources/AppIcon.png" align="right" width="128" alt="Squish icon">
 
 # Squish
 
