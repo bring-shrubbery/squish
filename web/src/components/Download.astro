@@ -1,12 +1,12 @@
 ---
-import { formatMegabytes, releasesPage, type Release } from '../lib/release';
+import { formatMegabytes, latestDmgURL, type Release } from '../lib/release';
 
 interface Props {
   release: Release | null;
 }
 const { release } = Astro.props;
 const label = release ? `Download Squish ${release.version}` : 'Download Squish';
-const href = release ? release.dmgURL : releasesPage;
+const href = release ? release.dmgURL : latestDmgURL;
 ---
 <div class="download">
   <a class="button" href={href}>

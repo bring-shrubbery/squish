@@ -17,6 +17,11 @@ export interface Release {
 export const repository = 'bring-shrubbery/squish';
 export const latestReleaseAPI = `https://api.github.com/repos/${repository}/releases/latest`;
 export const releasesPage = `https://github.com/${repository}/releases/latest`;
+/**
+ * Every release also carries the disk image under this fixed name, so GitHub's
+ * `latest/download` URL always starts a download of the newest version.
+ */
+export const latestDmgURL = `https://github.com/${repository}/releases/latest/download/Squish-macos-arm64.dmg`;
 
 const dmgSuffix = '-macos-arm64.dmg';
 
@@ -34,7 +39,9 @@ export function releaseFrom(json: unknown): Release | null {
   const r = json as Record<string, unknown>;
   if (typeof r.tag_name !== 'string' || r.tag_name === '') return null;
   if (typeof r.html_url !== 'string' || !Array.isArray(r.assets)) return null;
-  const dmg = r.assets.find((a) => isAsset(a) && a.name.endsWith(dmgSuffix));
+  // Prefer the versioned image (Squish-v1.2.3-macos-arm64.dmg) over its fixed-name copy.
+  const dmgs = r.assets.filter((a): a is Asset => isAsset(a) && a.name.endsWith(dmgSuffix));
+  const dmg = dmgs.find((a) => /-v\d/.test(a.name)) ?? dmgs[0];
   if (!isAsset(dmg)) return null;
   return { version: r.tag_name, notesURL: r.html_url, dmgURL: dmg.browser_download_url, dmgBytes: dmg.size };
 }

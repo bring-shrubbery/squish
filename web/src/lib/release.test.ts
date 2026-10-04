@@ -25,6 +25,13 @@ describe('releaseFrom', () => {
     });
   });
 
+  it('prefers the versioned dmg over its fixed-name copy, in either order', () => {
+    const latest = { name: 'Squish-macos-arm64.dmg', browser_download_url: 'https://example.invalid/latest', size: 4326140 };
+    expect(releaseFrom({ ...v100, assets: [latest, ...v100.assets] })?.dmgURL).toBe('https://example.invalid/dmg');
+    expect(releaseFrom({ ...v100, assets: [...v100.assets, latest] })?.dmgURL).toBe('https://example.invalid/dmg');
+    expect(releaseFrom({ ...v100, assets: [latest] })?.dmgURL).toBe('https://example.invalid/latest');
+  });
+
   it('is null without a dmg asset', () => {
     expect(releaseFrom({ ...v100, assets: v100.assets.filter((a) => !a.name.endsWith('.dmg')) })).toBeNull();
   });
