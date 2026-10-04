@@ -7,6 +7,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case costs
     case compactAlerts
     case liveChats
+    case worktrees
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .costs: "Costs"
         case .compactAlerts: "Compact alerts"
         case .liveChats: "Live chats"
+        case .worktrees: "Worktrees"
         }
     }
 
@@ -23,6 +25,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .costs: "chart.bar.xaxis"
         case .compactAlerts: "rectangle.topthird.inset.filled"
         case .liveChats: "bubble.left.and.bubble.right.fill"
+        case .worktrees: "arrow.triangle.branch"
         }
     }
 }

@@ -4,11 +4,13 @@ import SwiftUI
 struct SquishApplication: App {
     @StateObject private var appState = AppState()
     @StateObject private var updates = Updates()
+    @StateObject private var worktreeStore = WorktreeStore()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
+                .environmentObject(worktreeStore)
                 .frame(minWidth: 980, minHeight: 680)
         }
         .windowStyle(.hiddenTitleBar)

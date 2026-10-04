@@ -14,6 +14,7 @@
 - **Keeps the totals.** A durable cost ledger preserves your spend after the agents delete their old logs. Completed days are frozen; today updates live.
 - **Warns before context compacts.** When a session's context passes your threshold (80% by default, adjustable from 50% to 95%), a dark Dynamic Island style alert drops from the top of the screen. It re-arms once the session compacts below the threshold.
 - **Puts live chats in the notch.** Optionally, active sessions grow the notch sideways, and a Claude Code permission request or question drops it open so you can allow, deny or answer right there.
+- **Cleans up worktrees.** Lists every linked git worktree of the repos in your folder with its age and size, flags the ones older than 14 days or larger than 1 GB (both adjustable), and removes them with `git worktree remove`, keeping the branch. Worktrees with uncommitted or unpushed work need a second confirmation that says what would be lost.
 
 ## Install
 
