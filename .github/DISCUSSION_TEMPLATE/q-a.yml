@@ -1,0 +1,8 @@
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and what happens instead? Include your macOS version and Mac model if it might matter.
+    validations:
+      required: true

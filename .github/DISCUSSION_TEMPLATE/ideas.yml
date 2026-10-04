@@ -1,0 +1,27 @@
+title: "[idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas with the most upvotes and the clearest reasoning are what Squish's agents build next. Write for people: the problem and why it matters, not an implementation. Upvote existing ideas instead of opening duplicates.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, or what feels wrong today?
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What you would like Squish to do
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters to you
+      description: How would this change how you use the app?
+    validations:
+      required: true

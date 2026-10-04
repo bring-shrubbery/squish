@@ -1,0 +1,62 @@
+name: Issue gate
+
+# Issues are only for reproducible bugs filed with the bug template
+# (see CONTRIBUTING.md). Anything else is closed with a pointer to Discussions.
+# Maintainers' issues are always left alone.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  gate:
+    if: github.repository == 'bring-shrubbery/squish'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the issue against the contribution policy
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const MARKER = '<!-- squish:issue-gate -->';
+            const MAX_LENGTH = 8000;
+            const issue = context.payload.issue;
+            const author = issue.user.login.toLowerCase();
+            const body = issue.body || '';
+
+            const { data: file } = await github.rest.repos.getContent({
+              ...context.repo, path: '.github/MAINTAINERS', ref: context.payload.repository.default_branch });
+            const maintainers = new Set(Buffer.from(file.content, 'base64').toString('utf8')
+              .split('\n').map(l => l.trim().toLowerCase()).filter(l => l && !l.startsWith('#')));
+            if (maintainers.has(author) || issue.user.type === 'Bot') { core.info('maintainer or bot; skipping'); return; }
+
+            // The bug template always produces these headings; a freeform or
+            // feature-request issue does not.
+            const usesTemplate = /### Current behaviour/i.test(body)
+              && /### Steps to reproduce/i.test(body)
+              && /### Environment/i.test(body);
+            const tooLong = body.length > MAX_LENGTH;
+
+            let reason = null;
+            if (!usesTemplate) {
+              reason = 'it was not filed with the bug report template. Issues are only for bugs you have reproduced yourself; feature requests, ideas and questions belong in Discussions.';
+            } else if (tooLong) {
+              reason = `it is longer than ${MAX_LENGTH} characters. A good report fits on one screen: what happens, what you expected, the shortest steps, the impact and your environment. Please file it again without analysis, proposed fixes or logs beyond the smallest useful excerpt.`;
+            }
+            if (!reason) { core.info('template used; leaving open'); return; }
+
+            const text = [
+              MARKER,
+              `Hi @${issue.user.login}, thanks for taking the time to write this. It is being closed automatically because ${reason}`,
+              '',
+              '- Feature requests and ideas: [Discussions › Ideas](https://github.com/bring-shrubbery/squish/discussions/categories/ideas). The most upvoted, best argued ideas are what gets built next.',
+              '- Questions: [Discussions › Q&A](https://github.com/bring-shrubbery/squish/discussions/categories/q-a).',
+              '- A bug you can reproduce: [file it with the template](https://github.com/bring-shrubbery/squish/issues/new/choose).',
+              '',
+              'See [CONTRIBUTING.md](https://github.com/bring-shrubbery/squish/blob/main/CONTRIBUTING.md) for how Squish takes contributions.',
+            ].join('\n');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number, body: text });
+            await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned' });

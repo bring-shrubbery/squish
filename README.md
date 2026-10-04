@@ -2,6 +2,17 @@
 
 Squish is a local macOS app for monitoring coding-agent sessions inside a selected folder.
 
+**Website:** https://squish.quassum.com · **Download:** [latest release](https://github.com/bring-shrubbery/squish/releases/latest)
+
+## Install
+
+Download `Squish-vX.Y.Z-macos-arm64.dmg` from the [latest release](https://github.com/bring-shrubbery/squish/releases/latest),
+open it and drag Squish into Applications. Releases are signed with a Developer ID and
+notarized by Apple. Squish needs macOS 14 or later on Apple silicon.
+
+Squish updates itself: it checks for new versions automatically through
+[Sparkle](https://sparkle-project.org), and **Squish → Check for Updates…** checks on demand.
+
 ## Included
 
 - Onboarding with a persistent folder selection.
@@ -43,6 +54,8 @@ Everything is parsed locally. No session content is uploaded.
     ./scripts/build-app.sh
 
 The result is written to dist/Squish.app. The development bundle is ad-hoc signed.
+Releases are built, signed, notarized and published automatically from `main`; see
+[docs/release.md](docs/release.md).
 
 ## Session sources
 
@@ -62,3 +75,15 @@ The catalog is versioned in Sources/SquishCore/PricingCatalog.swift and currentl
 - Gemini API pricing: https://ai.google.dev/gemini-api/docs/pricing
 
 Values are API-equivalent estimates. Codex, Claude, or Gemini subscription billing can differ. Unknown model IDs remain visible but are excluded from estimated totals until a price is added.
+
+## Contributing
+
+Ideas and questions go to [Discussions](https://github.com/bring-shrubbery/squish/discussions),
+reproduced bugs to [Issues](https://github.com/bring-shrubbery/squish/issues). Pull requests are
+not accepted; [CONTRIBUTING.md](CONTRIBUTING.md) explains why.
+
+## License
+
+Squish is licensed under the [Apache License 2.0](LICENSE).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the third-party components
+(DynamicNotchKit and Sparkle, both MIT).

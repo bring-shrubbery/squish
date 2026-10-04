@@ -1,0 +1,3 @@
+# GitHub accounts allowed to open pull requests. Curated by maintainers; not an application list.
+# One per line, lowercase. Lines starting with # are ignored.
+dependabot[bot]

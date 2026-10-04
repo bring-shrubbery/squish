@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a bug in Squish that you have reproduced yourself.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you start:** read [CONTRIBUTING.md](https://github.com/bring-shrubbery/squish/blob/main/CONTRIBUTING.md).
+
+        Issues are only for reproducible bugs. Feature requests, ideas and questions belong in [Discussions](https://github.com/bring-shrubbery/squish/discussions) and are closed if opened here.
+
+        Keep this to about one screen. Use only the sections below: no root-cause analysis, proposed fix, patch or agent investigation dump. Squish is fixed by agents the maintainers run; filing a report does not reserve the fix or authorise a pull request.
+
+        AI agents may submit this form only for a bug the user actually reproduced.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Is this a reproducible bug?
+      options:
+        - label: I confirm this is a reproducible bug, not a feature request, idea or question.
+          required: true
+        - label: I reproduced it on the version and Mac described below with the exact steps given.
+          required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behaviour
+      description: What happens? Describe what you observed, not a guessed cause.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest exact steps. Mention the coding agent (Claude Code, Codex, Gemini CLI) and its version if they matter.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How does this affect your work?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Squish version (or commit):
+        - macOS version:
+        - Mac model / chip:
+        - Coding agent(s) and version, if relevant:
+        - Terminal app, if the live chats are involved:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt (optional)
+      description: The smallest useful excerpt from Console.app, if any.
+      render: text

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature requests and ideas
+    url: https://github.com/bring-shrubbery/squish/discussions/categories/ideas
+    about: The ideas with the most upvotes and the clearest reasoning are what gets built next.
+  - name: Questions
+    url: https://github.com/bring-shrubbery/squish/discussions/categories/q-a
+    about: Questions like "is this expected?" or "how do I…", and anything that is not a reproducible bug.
+  - name: Security
+    url: https://github.com/bring-shrubbery/squish/security/advisories/new
+    about: Report a security problem privately.
