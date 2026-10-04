@@ -57,4 +57,11 @@ final class RepoDiscoveryTests: XCTestCase {
         XCTAssertEqual(RepoDiscovery.candidates(under: root, maxDepth: 4), [])
         XCTAssertEqual(names(RepoDiscovery.candidates(under: root, maxDepth: 5)), ["a/b/c/d/e"])
     }
+
+    func testSkipsPackagesAndLibrary() throws {
+        try makeRepo("Foo.app")
+        try makeRepo("Library/Developer/thing")
+        try makeRepo("app")
+        XCTAssertEqual(names(RepoDiscovery.candidates(under: root)), ["app"])
+    }
 }
