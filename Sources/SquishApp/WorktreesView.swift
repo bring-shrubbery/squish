@@ -9,9 +9,17 @@ struct WorktreesView: View {
     // title and message never go blank while it animates out.
     @State private var confirmation: Confirmation?
     @State private var isConfirming = false
-    @State private var removeAnywayTarget: Worktree?
+    @State private var removeAnywayTarget: LossTarget?
     @State private var isConfirmingAnyway = false
     @State private var skippedAfterBulk: [Worktree] = []
+
+    /// A worktree with work in it and the counts the user saw; removal refuses if git
+    /// reports more by the time it runs.
+    private struct LossTarget {
+        let worktree: Worktree
+        let uncommitted: Int
+        let unpushed: Int
+    }
 
     private enum Confirmation {
         case remove(Worktree)
@@ -79,11 +87,20 @@ struct WorktreesView: View {
         // The second confirmation for losing work: its own alert, so presenting it cannot be
         // dropped while the first one is still animating out.
         .alert(
-            Text(removeAnywayTarget.map { "Remove \($0.displayName) anyway?" } ?? ""),
+            Text(removeAnywayTarget.map { "Remove \($0.worktree.displayName) anyway?" } ?? ""),
             isPresented: $isConfirmingAnyway,
             presenting: removeAnywayTarget
-        ) { worktree in
-            Button("Remove anyway", role: .destructive) { Task { await store.remove(worktree, force: true) } }
+        ) { target in
+            Button("Remove anyway", role: .destructive) {
+                Task {
+                    await store.remove(
+                        target.worktree,
+                        force: true,
+                        confirmedUncommitted: target.uncommitted,
+                        confirmedUnpushed: target.unpushed
+                    )
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("This cannot be undone.")
@@ -124,7 +141,7 @@ struct WorktreesView: View {
         .padding(18)
         .appCard()
         .overlay(alignment: .bottomTrailing) {
-            if let reclaimed = store.lastReclaimed {
+            if let reclaimed = store.lastReclaimed, reclaimed > 0 {
                 Text("Freed \(Self.bytes(reclaimed))")
                     .font(.system(size: 11, weight: .semibold))
                     .padding(.horizontal, 10)
@@ -217,7 +234,7 @@ struct WorktreesView: View {
                     if worktree.uncommittedCount > 0 { chip("Uncommitted changes", AppColors.amber) }
                     if worktree.unpushedCount > 0 { chip("Unpushed commits", AppColors.amber) }
                     if WorktreePolicy.hasActiveSession(worktree, activeSessionPaths: store.activeSessionPaths) {
-                        chip("Session active", AppColors.mint)
+                        chip("In use", AppColors.mint)
                     }
                     if worktree.isLocked { chip("Locked", .secondary) }
                     if worktree.isPrunable { chip("Missing", AppColors.coral) }
@@ -318,7 +335,8 @@ struct WorktreesView: View {
             lossText(worktree, uncommitted: uncommitted, unpushed: unpushed, detached: detached)
         case let .bulk(remove, skipped):
             remove.map(\.displayName).joined(separator: ", ") + ". Their branches are kept."
-                + (skipped.isEmpty ? "" : " \(skipped.count) with work in them will be skipped.")
+                + (skipped.isEmpty ? "" : " \(skipped.map(\.displayName).joined(separator: ", ")) will be"
+                    + " skipped: they have work in them, are in use, locked, or unreadable.")
         }
     }
 
@@ -327,9 +345,9 @@ struct WorktreesView: View {
         switch confirmation {
         case .remove(let worktree):
             Button("Remove", role: .destructive) { Task { await store.remove(worktree, force: false) } }
-        case .losingWork(let worktree, _, _, _):
+        case let .losingWork(worktree, uncommitted, unpushed, _):
             Button("Continue…", role: .destructive) {
-                removeAnywayTarget = worktree
+                removeAnywayTarget = LossTarget(worktree: worktree, uncommitted: uncommitted, unpushed: unpushed)
                 isConfirmingAnyway = true
             }
         case let .bulk(remove, skipped):
@@ -348,12 +366,15 @@ struct WorktreesView: View {
     private func lossText(_ worktree: Worktree, uncommitted: Int, unpushed: Int, detached: Bool) -> String {
         var lines: [String] = []
         if uncommitted > 0 {
-            lines.append("\(uncommitted) uncommitted \(uncommitted == 1 ? "file" : "files") will be deleted.")
+            let changes = uncommitted == 1 ? "change (file or folder)" : "changes (files or folders)"
+            lines.append("\(uncommitted) uncommitted \(changes) will be deleted.")
         }
         if unpushed > 0 {
             let commits = "\(unpushed) \(unpushed == 1 ? "commit is" : "commits are") on no remote or other branch"
             if detached {
-                lines.append("\(commits) and will only be reachable through git's reflog.")
+                // git worktree remove deletes this worktree's HEAD reflog, so Squish saves them first.
+                let branch = WorktreeRemover.rescueBranchBase(head: worktree.head)
+                lines.append("\(commits); \(unpushed == 1 ? "it" : "they") will be saved on a new branch \(branch).")
             } else {
                 lines.append("\(commits); \(unpushed == 1 ? "it stays" : "they stay") on branch \(worktree.branch ?? "").")
             }

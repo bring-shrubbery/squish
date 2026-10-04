@@ -14,8 +14,9 @@ final class WorktreeStore: ObservableObject {
     @Published private(set) var lastReclaimed: Int64?
     /// True while any remove or prune runs; the view disables removal controls meanwhile.
     @Published private(set) var isRemoving = false
-    /// Normalized paths of sessions active in the last few minutes; published so rows re-render
-    /// (and Remove re-gates) when a session starts in a worktree.
+    /// Normalized cwds of live agent sessions and of running processes (shells, editors, agents
+    /// keeping worktrees anywhere); published so rows re-render (and Remove re-gates) when one
+    /// starts in a worktree. Removal re-probes both right before deleting anything.
     @Published private(set) var activeSessionPaths: [String] = []
     @Published var thresholds: WorktreeThresholds {
         didSet {
@@ -34,6 +35,9 @@ final class WorktreeStore: ObservableObject {
     private let defaults: UserDefaults
     private var root: URL?
     private var sessions: [CodingSession] = []
+    private var liveSessionPaths: [String] = []
+    /// Process cwds from the last refresh.
+    private var processPaths: [String] = []
     private var refreshTask: Task<Void, Never>?
     private var sizingTask: Task<Void, Never>?
     private var timer: Timer?
@@ -60,14 +64,25 @@ final class WorktreeStore: ObservableObject {
         let rootChanged = root?.standardizedFileURL != self.root?.standardizedFileURL
         self.root = root
         self.sessions = sessions
-        let paths = WorktreePolicy.liveSessionPaths(sessions, now: Date())
-        if paths != activeSessionPaths { activeSessionPaths = paths }
+        liveSessionPaths = WorktreePolicy.liveSessionPaths(sessions, now: Date())
+        updateActivePaths()
         if rootChanged {
             sizingTask?.cancel()
             scans = []
             sizes = [:]
             refresh()
         }
+    }
+
+    private func updateActivePaths() {
+        let paths = Array(Set(liveSessionPaths + processPaths)).sorted()
+        if paths != activeSessionPaths { activeSessionPaths = paths }
+    }
+
+    /// Live sessions plus running processes, probed now. Call off the main actor.
+    nonisolated private static func probeActivePaths(sessionPaths: [String]) -> [String] {
+        // Squish's own git commands run inside worktrees; they are not activity.
+        sessionPaths + ProcessWorkingDirectories.current(excludingChildrenOf: getpid())
     }
 
     var worktrees: [Worktree] {
@@ -111,15 +126,17 @@ final class WorktreeStore: ObservableObject {
         let sessionPaths = sessions.map(\.projectPath)
         let scannedRoot = root.standardizedFileURL
         refreshTask = Task {
-            let result = await Task.detached(priority: .utility) { () -> Result<[RepoScan], GitError> in
+            let (result, cwds) = await Task.detached(priority: .utility) { () -> (Result<[RepoScan], GitError>, [String]) in
+                let result: Result<[RepoScan], GitError>
                 do {
                     let repos = try scanner.repos(root: root, sessionPaths: sessionPaths)
-                    return .success(scanner.scanAll(repos: repos))
+                    result = .success(scanner.scanAll(repos: repos))
                 } catch let error as GitError {
-                    return .failure(error)
+                    result = .failure(error)
                 } catch {
-                    return .failure(.failed(message: error.localizedDescription))
+                    result = .failure(.failed(message: error.localizedDescription))
                 }
+                return (result, ProcessWorkingDirectories.current(excludingChildrenOf: getpid()))
             }.value
             // The watched folder changed mid-scan: drop the old folder's result and scan the new one.
             guard self.root?.standardizedFileURL == scannedRoot else {
@@ -128,6 +145,8 @@ final class WorktreeStore: ObservableObject {
                 refresh()
                 return
             }
+            processPaths = cwds
+            updateActivePaths()
             switch result {
             case .success(let scans):
                 self.scans = scans
@@ -151,13 +170,29 @@ final class WorktreeStore: ObservableObject {
 
     /// Removes one worktree; returns the bytes it freed, or nil when git refused or the
     /// worktree is no longer safe to remove this way. Does nothing while another removal runs.
+    /// A forced removal passes the counts the user confirmed losing; it is refused if git now
+    /// reports more.
     @discardableResult
-    func remove(_ worktree: Worktree, force: Bool) async -> Int64? {
+    func remove(
+        _ worktree: Worktree,
+        force: Bool,
+        confirmedUncommitted: Int = 0,
+        confirmedUnpushed: Int = 0
+    ) async -> Int64? {
         guard !isRemoving else { return nil }
-        return await remove(worktree, force: force, showsReclaimed: true)
+        return await remove(
+            worktree, force: force, confirmedUncommitted: confirmedUncommitted,
+            confirmedUnpushed: confirmedUnpushed, showsReclaimed: true
+        )
     }
 
-    private func remove(_ worktree: Worktree, force: Bool, showsReclaimed: Bool) async -> Int64? {
+    private func remove(
+        _ worktree: Worktree,
+        force: Bool,
+        confirmedUncommitted: Int,
+        confirmedUnpushed: Int,
+        showsReclaimed: Bool
+    ) async -> Int64? {
         guard let latest = current(worktree) else {
             rowErrors[worktree.path] = "This worktree is no longer listed. Refresh and try again."
             return nil
@@ -181,9 +216,18 @@ final class WorktreeStore: ObservableObject {
         defer { removalDepth -= 1 }
         let git = scanner.git
         rowErrors[worktree.path] = nil
+        let sessionPaths = WorktreePolicy.liveSessionPaths(sessions, now: Date())
+        // The deciding check reads git and the process table now, not the last scan.
         let failure: String? = await Task.detached(priority: .userInitiated) {
             do {
-                try git.remove(worktree: worktree.path, repo: worktree.repoPath, force: force)
+                try WorktreeRemover.remove(
+                    worktree,
+                    git: git,
+                    activePaths: Self.probeActivePaths(sessionPaths: sessionPaths),
+                    force: force,
+                    confirmedUncommitted: confirmedUncommitted,
+                    confirmedUnpushed: confirmedUnpushed
+                )
                 try? git.prune(repo: worktree.repoPath)
                 return nil
             } catch {
@@ -237,7 +281,9 @@ final class WorktreeStore: ObservableObject {
                 skipped.append(worktree)
                 continue
             }
-            if let freed = await self.remove(worktree, force: false, showsReclaimed: false) {
+            if let freed = await self.remove(
+                worktree, force: false, confirmedUncommitted: 0, confirmedUnpushed: 0, showsReclaimed: false
+            ) {
                 total += freed
             } else {
                 skipped.append(worktree)
