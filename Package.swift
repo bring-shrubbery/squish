@@ -12,7 +12,8 @@ let package = Package(
         .executable(name: "squish-hook", targets: ["SquishHook"])
     ],
     dependencies: [
-        .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.1.0")
+        .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.1.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0")
     ],
     targets: [
         .target(name: "SquishCore"),
@@ -24,7 +25,8 @@ let package = Package(
             name: "SquishApp",
             dependencies: [
                 "SquishCore",
-                .product(name: "DynamicNotchKit", package: "DynamicNotchKit")
+                .product(name: "DynamicNotchKit", package: "DynamicNotchKit"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             exclude: ["Resources"]
         ),
