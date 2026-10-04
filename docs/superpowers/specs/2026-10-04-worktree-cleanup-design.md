@@ -27,7 +27,9 @@ destroys uncommitted or unpushed work without an explicit, specific confirmation
 | Implementation | Shell out to the `git` command line. Not reading `.git/worktrees` directly (fragile; removal needs git anyway), not libgit2 (heavy dependency). |
 
 Out of scope: the main worktree of a repo (never listed or removed), deleting branches,
-notch alerts, automatic cleanup, worktrees outside the watched folder.
+notch alerts, automatic cleanup, repos outside the watched folder. Linked worktrees of an
+in-folder repo are listed wherever they live (Codex, for example, keeps its worktrees under
+`~/.codex/worktrees`).
 
 ## Discovery and data
 
@@ -47,9 +49,10 @@ one):
 - size in bytes: allocated size on disk of every file, measured at low priority and cached
   by path and the worktree's last-activity date; `nil` while measuring or if it fails
 - uncommitted changes: the count of entries in `git status --porcelain` (untracked included)
-- unpushed commits: commits reachable from HEAD and from no remote-tracking ref
-  (`git rev-list --count HEAD --not --remotes`); a branch never pushed counts all its
-  commits not on any remote
+- unpushed commits: commits reachable from HEAD that are on no remote-tracking ref and on no
+  other local branch (`git rev-list --count HEAD --not --exclude=refs/heads/<branch>
+  --branches --remotes`), so a fresh worktree branched from `main` in a repo without a
+  remote counts zero, and only work that exists nowhere else counts
 - agent: "Claude Code" for paths under `/.claude/worktrees/`, otherwise none
 - session active: a tracked live session's working directory is the worktree path or inside it
 
