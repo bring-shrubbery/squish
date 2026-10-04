@@ -19,6 +19,7 @@ struct RootView: View {
 
 struct DashboardShell: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var worktreeStore: WorktreeStore
 
     var body: some View {
         HStack(spacing: 0) {
@@ -35,15 +36,27 @@ struct DashboardShell: View {
                     CompactAlertsView()
                 case .liveChats:
                     LiveChatsSettingsView()
+                case .worktrees:
+                    WorktreesView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear {
+            worktreeStore.update(root: appState.projectRoot, sessions: appState.sessions)
+        }
+        .onReceive(appState.$projectRoot) { root in
+            worktreeStore.update(root: root, sessions: appState.sessions)
+        }
+        .onReceive(appState.$sessions) { sessions in
+            worktreeStore.update(root: appState.projectRoot, sessions: sessions)
         }
     }
 }
 
 private struct Sidebar: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var worktreeStore: WorktreeStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -74,7 +87,14 @@ private struct Sidebar: View {
                         Text(section.title)
                             .font(.system(size: 14, weight: .semibold))
                         Spacer()
-                        if (section == .compactAlerts && appState.alertsEnabled)
+                        if section == .worktrees, worktreeStore.flaggedCount > 0 {
+                            Text("\(worktreeStore.flaggedCount)")
+                                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                .padding(.horizontal, 6)
+                                .frame(height: 17)
+                                .background(AppColors.amber.opacity(0.28), in: Capsule())
+                                .foregroundStyle(AppColors.amber)
+                        } else if (section == .compactAlerts && appState.alertsEnabled)
                             || (section == .liveChats && appState.liveChatsEnabled) {
                             Circle()
                                 .fill(AppColors.mint)

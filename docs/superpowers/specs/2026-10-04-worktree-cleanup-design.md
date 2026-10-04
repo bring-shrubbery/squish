@@ -23,7 +23,7 @@ destroys uncommitted or unpushed work without an explicit, specific confirmation
 | How flagged ones surface | A list highlighting worktrees past the thresholds, and a sidebar badge with their count. No notch alerts, no automatic removal. |
 | Age | Time since last activity: the later of the HEAD commit date and the modification date of the worktree's git index (the last git operation in it). |
 | Thresholds | 14 days and 1 GB by default, adjustable, saved in UserDefaults. A worktree is flagged when it passes either. |
-| Active sessions | A worktree containing the working directory of a live agent session is never flagged and cannot be removed. |
+| Active sessions | A worktree containing the working directory of a live agent session, or of any running process the user can inspect (shells, editors, agents keeping worktrees anywhere, read with libproc), is never flagged and cannot be removed. |
 | Implementation | Shell out to the `git` command line. Not reading `.git/worktrees` directly (fragile; removal needs git anyway), not libgit2 (heavy dependency). |
 
 Out of scope: the main worktree of a repo (never listed or removed), deleting branches,
@@ -50,11 +50,12 @@ one):
   by path and the worktree's last-activity date; `nil` while measuring or if it fails
 - uncommitted changes: the count of entries in `git status --porcelain` (untracked included)
 - unpushed commits: commits reachable from HEAD that are on no remote-tracking ref and on no
-  other local branch (`git rev-list --count HEAD --not --exclude=refs/heads/<branch>
-  --branches --remotes`), so a fresh worktree branched from `main` in a repo without a
+  other local branch (`git rev-list --count HEAD --not --exclude=<branch>
+  --branches --remotes`; git matches `--exclude` for `--branches` relative to `refs/heads/`), so a fresh worktree branched from `main` in a repo without a
   remote counts zero, and only work that exists nowhere else counts
 - agent: "Claude Code" for paths under `/.claude/worktrees/`, otherwise none
-- session active: a tracked live session's working directory is the worktree path or inside it
+- in use: a tracked live session's or a running process's working directory is the worktree
+  path or inside it
 
 A prunable worktree (its directory is gone) is shown with a "Missing" chip and only offers
 pruning.
@@ -72,7 +73,7 @@ editable controls (age in days, size in GB), a "Flagged only" filter and Refresh
 
 **List:** grouped by repo, rows sorted by size, largest first. A row shows the branch and
 path, the agent label, last activity ("3 weeks ago"), size ("Measuring…" until known), and
-chips for *Uncommitted changes*, *Unpushed commits*, *Session active*, *Locked*, *Missing*.
+chips for *Uncommitted changes*, *Unpushed commits*, *In use*, *Locked*, *Missing*.
 Rows past a threshold are highlighted and say which threshold. Actions: Reveal in Finder,
 Open in Terminal, Remove.
 
@@ -86,16 +87,27 @@ The section follows the existing dark dashboard style (`AppColors`, the cards an
 - `.confirm` — clean: "Remove `feature-x` (2.3 GB)? The branch `feature-x` is kept."
   Runs `git worktree remove <path>`.
 - `.confirmLosingWork(uncommitted:unpushed:)` — the first confirmation lists what would be
-  lost ("4 uncommitted files will be deleted. 2 commits are on no remote; they stay on
+  lost ("4 uncommitted changes (files or folders) will be deleted. 2 commits are on no remote; they stay on
   branch `feature-x`."), and a second "Remove anyway" runs `git worktree remove --force <path>`.
-  A detached HEAD with unpushed commits says those commits will only be reachable via the
-  reflog.
-- `.blocked(reason:)` — a live session is in it, or it is locked. The button is disabled
+  A detached HEAD's HEAD reflog lives in `.git/worktrees/<id>/logs/HEAD`, which
+  `git worktree remove` deletes, so before a forced removal of a detached HEAD with unpushed
+  commits Squish creates a branch `squish/rescued-<short sha>` at that HEAD (suffixed `-2`,
+  `-3`… if taken), and the confirmation says the commits will be saved on that new branch.
+- `.blocked(reason:)` — a live session or a process is working in it, it is locked, or git
+  could not read it. The button is disabled
   with the reason.
 - `.pruneOnly` — the directory is missing; runs `git worktree prune`.
 
 **Remove flagged** removes every flagged worktree whose removal is `.confirm`, after one
 confirmation listing them and the total space. The others are skipped and named.
+
+Immediately before `git worktree remove`, off the main actor, Squish re-reads the worktree
+from git (still listed, not locked, same branch, uncommitted and unpushed counts) and
+re-probes live sessions and process working directories. A plain removal is refused unless
+both counts are 0 and nothing is working in it; a forced one is refused if either count
+exceeds what the user confirmed or something is working in it. "Remove flagged" applies the
+plain check to each worktree. `git worktree remove` and `git worktree prune` run without a
+timeout; reads keep the 15-second timeout (SIGTERM, then SIGKILL after 2 s).
 
 After any removal Squish runs `git worktree prune` in that repo, re-reads that repo, and
 shows the reclaimed space briefly. When git fails, its stderr is shown on the row and the
