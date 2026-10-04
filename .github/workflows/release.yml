@@ -72,8 +72,6 @@ jobs:
     runs-on: macos-26
     permissions:
       contents: write
-      # To dispatch the Website workflow once the release is out.
-      actions: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
@@ -306,12 +304,13 @@ jobs:
 
       - name: Rebuild the website
         env:
-          GH_TOKEN: ${{ github.token }}
+          CF_DEPLOY_HOOK_URL: ${{ secrets.CF_DEPLOY_HOOK_URL }}
         run: |
-          if ! gh workflow run web.yml --repo "$GITHUB_REPOSITORY" --ref main; then
-            echo "::warning::could not dispatch the Website workflow; the download button keeps offering the previous release until it is re-run (docs/release.md)"
+          if [ -z "$CF_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::CF_DEPLOY_HOOK_URL is not set; the website keeps offering the previous release until it is rebuilt (docs/release.md)"
             exit 0
           fi
+          curl -fsS --retry 3 --retry-all-errors -X POST "$CF_DEPLOY_HOOK_URL" -o /dev/null
           echo "website rebuild requested"
 
       - name: Summary

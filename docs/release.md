@@ -9,8 +9,8 @@ its download button offers the new version.
 
 The pipeline mirrors NeuralSheet's. The differences: Squish is a Swift package, so
 `scripts/build-app.sh` assembles and signs the bundle instead of an Xcode archive,
-and the website deploys from GitHub Actions with wrangler (`.github/workflows/web.yml`)
-instead of Cloudflare Workers Builds.
+and there is no Audio Unit or iOS app. The website deploys through Cloudflare Workers
+Builds, as NeuralSheet's does.
 
 ## Versions
 
@@ -50,7 +50,7 @@ user will read.
 5. **Appcast**: the zip is signed with the Sparkle EdDSA key and
    `scripts/release-appcast.sh` writes the feed.
 6. **Publish**: tag, GitHub release with the dmg, zip and `appcast.xml`, then
-   dispatch the Website workflow.
+   call the website's deploy hook.
 
 The same build runs locally on a Mac with the certificate, up to notarization:
 
@@ -101,7 +101,7 @@ gh secret set ASC_API_KEY_ID --body XXXXXXXXXX
 gh secret set ASC_API_ISSUER_ID --body 00000000-0000-0000-0000-000000000000
 ```
 
-`gh secret list` should then show all eight names (plus the website's two).
+`gh secret list` should then show all eight names (and `CF_DEPLOY_HOOK_URL`, below).
 
 ### 3. Sparkle (in-app updates)
 
@@ -125,9 +125,11 @@ then switch the secret.
 
 ### 4. The website
 
-`CLOUDFLARE_ACCOUNT_ID` is set; `CLOUDFLARE_API_TOKEN` must be added (see
-`web/README.md`). Without it the Website workflow fails and the site keeps offering
-the previous release; the app release itself is unaffected.
+The site rebuilds itself through Cloudflare Workers Builds on pushes that touch `web/`
+(`web/README.md` has the one-time setup). An optional ninth secret, `CF_DEPLOY_HOOK_URL`,
+is the Workers Builds deploy hook; the release POSTs it so the download button shows the
+new version at once. Without it the release still publishes, with a warning, and the site
+catches up at its next build.
 
 ### 5. The first release
 
@@ -148,5 +150,5 @@ produces one red Release run that stops at the secrets check; that is expected.
   zip and `appcast.xml` are attached to that run as artifacts. Publish all three by
   hand as release `vX.Y.Z`, or delete the tag (`git push origin :refs/tags/vX.Y.Z`) and
   re-run.
-- **Rebuild the website failed**: the release is out; run the Website workflow from
-  the Actions tab.
+- **Rebuild the website failed**: the release is out; only the site's download button
+  is stale. Re-run the build from the Worker's *Builds* page in the Cloudflare dashboard.
