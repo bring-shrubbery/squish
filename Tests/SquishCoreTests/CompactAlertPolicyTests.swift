@@ -21,10 +21,44 @@ final class CompactAlertPolicyTests: XCTestCase {
         )
     }
 
-    func testAssistantOnlyUpdateNeverNotifies() {
-        let messageDate = now.addingTimeInterval(-2)
-        let previous = makeSession(lastUserMessageAt: messageDate, contextTokens: 80_000)
-        let assistantUpdate = makeSession(lastUserMessageAt: messageDate, contextTokens: 90_000)
+    func testFreshContextGrowthCanNotifyDuringLongAssistantTurn() {
+        let messageDate = now.addingTimeInterval(-600)
+        let previous = makeSession(
+            lastUserMessageAt: messageDate,
+            contextTokens: 49_000,
+            updatedAt: now.addingTimeInterval(-2)
+        )
+        let assistantUpdate = makeSession(
+            lastUserMessageAt: messageDate,
+            contextTokens: 64_000,
+            updatedAt: now.addingTimeInterval(-1)
+        )
+
+        XCTAssertTrue(
+            CompactAlertPolicy.shouldNotify(
+                previous: previous,
+                current: assistantUpdate,
+                threshold: 0.5,
+                isArmed: true,
+                hasAlerted: false,
+                monitoringIsEstablished: true,
+                now: now
+            )
+        )
+    }
+
+    func testUpdateWithoutContextGrowthNeverNotifies() {
+        let messageDate = now.addingTimeInterval(-600)
+        let previous = makeSession(
+            lastUserMessageAt: messageDate,
+            contextTokens: 90_000,
+            updatedAt: now.addingTimeInterval(-2)
+        )
+        let assistantUpdate = makeSession(
+            lastUserMessageAt: messageDate,
+            contextTokens: 90_000,
+            updatedAt: now.addingTimeInterval(-1)
+        )
 
         XCTAssertFalse(
             CompactAlertPolicy.shouldNotify(
@@ -78,6 +112,7 @@ final class CompactAlertPolicyTests: XCTestCase {
     private func makeSession(
         lastUserMessageAt: Date?,
         contextTokens: Int = 90_000,
+        updatedAt: Date? = nil,
         isSubagent: Bool = false
     ) -> CodingSession {
         CodingSession(
@@ -90,7 +125,7 @@ final class CompactAlertPolicyTests: XCTestCase {
             contextTokens: contextTokens,
             contextWindow: 100_000,
             startedAt: now.addingTimeInterval(-600),
-            updatedAt: now,
+            updatedAt: updatedAt ?? now,
             logPath: "/tmp/alert-policy.jsonl",
             lastUserMessageAt: lastUserMessageAt,
             isSubagent: isSubagent
