@@ -14,12 +14,14 @@ final class WorktreePolicyTests: XCTestCase {
         uncommitted: Int = 0,
         unpushed: Int = 0,
         locked: Bool = false,
-        prunable: Bool = false
+        prunable: Bool = false,
+        detailError: String? = nil
     ) -> Worktree {
         Worktree(
             path: path, repoPath: "/repo", branch: branch, head: "0123456789abcdef",
             isLocked: locked, isPrunable: prunable, lastActivity: lastActivity,
-            uncommittedCount: uncommitted, unpushedCount: unpushed, sizeBytes: size
+            uncommittedCount: uncommitted, unpushedCount: unpushed, sizeBytes: size,
+            detailError: detailError
         )
     }
 
@@ -108,6 +110,17 @@ final class WorktreePolicyTests: XCTestCase {
         guard case .blocked = WorktreePolicy.removal(for: make(locked: true), activeSessionPaths: []) else {
             return XCTFail("expected blocked")
         }
+    }
+
+    func testDetailErrorBlocksRemovalUnlessPrunable() {
+        XCTAssertEqual(
+            WorktreePolicy.removal(for: make(detailError: "git log failed"), activeSessionPaths: []),
+            .blocked(reason: "git log failed")
+        )
+        XCTAssertEqual(
+            WorktreePolicy.removal(for: make(prunable: true, detailError: "git log failed"), activeSessionPaths: []),
+            .pruneOnly
+        )
     }
 
     func testPrunableIsNeverFlagged() {

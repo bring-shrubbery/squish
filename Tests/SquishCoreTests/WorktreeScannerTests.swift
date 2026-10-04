@@ -6,6 +6,7 @@ private struct FakeGit: GitClient {
     var records: [String: [WorktreeRecord]] = [:]
     var failingRepo: String?
     var unavailable = false
+    var failingWorktree: String?
 
     func listWorktrees(repo: String) throws -> [WorktreeRecord] {
         if repo == failingRepo { throw GitError.timedOut(command: "worktree") }
@@ -13,7 +14,10 @@ private struct FakeGit: GitClient {
     }
     func uncommittedCount(worktree: String) throws -> Int { worktree.hasSuffix("dirty") ? 3 : 0 }
     func unpushedCount(worktree: String, branch: String?) throws -> Int { 0 }
-    func lastActivity(worktree: String) throws -> Date? { Date(timeIntervalSince1970: 1_000) }
+    func lastActivity(worktree: String) throws -> Date? {
+        if worktree == failingWorktree { throw GitError.failed(message: "unborn HEAD") }
+        return Date(timeIntervalSince1970: 1_000)
+    }
     func mainRepoRoot(containing path: String) throws -> String? {
         if unavailable { throw GitError.unavailable }
         return path.hasPrefix("/r") ? "/r" : nil
@@ -47,8 +51,25 @@ final class WorktreeScannerTests: XCTestCase {
         XCTAssertEqual(scans[1].worktrees.count, 1)
     }
 
-    func testReposPropagateUnavailable() {
-        let root = FileManager.default.temporaryDirectory
+    func testOneFailingWorktreeIsListedWithItsErrorAndSiblingsStillScan() {
+        let git = FakeGit(
+            records: ["/r": [record("/r", main: true), record("/r/broken"), record("/r/wt-dirty")]],
+            failingWorktree: "/r/broken"
+        )
+        let scan = WorktreeScanner(git: git).scan(repo: "/r")
+        XCTAssertNil(scan.error)
+        XCTAssertEqual(scan.worktrees.map(\.path), ["/r/broken", "/r/wt-dirty"])
+        XCTAssertEqual(scan.worktrees[0].detailError, GitError.failed(message: "unborn HEAD").localizedDescription)
+        XCTAssertNil(scan.worktrees[0].lastActivity)
+        XCTAssertEqual(scan.worktrees[0].uncommittedCount, 0)
+        XCTAssertNil(scan.worktrees[1].detailError)
+        XCTAssertEqual(scan.worktrees[1].uncommittedCount, 3)
+    }
+
+    func testReposPropagateUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
         XCTAssertThrowsError(try WorktreeScanner(git: FakeGit(unavailable: true)).repos(root: root, sessionPaths: ["/r/x"])) {
             XCTAssertEqual($0 as? GitError, .unavailable)
         }

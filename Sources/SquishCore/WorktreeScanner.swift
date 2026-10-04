@@ -26,7 +26,9 @@ public struct WorktreeScanner: Sendable {
     /// Throws only `GitError.unavailable`; any other failure skips that candidate.
     public func repos(root: URL, sessionPaths: [String], maxDepth: Int = 4) throws -> [String] {
         var seen = Set<String>()
-        for candidate in RepoDiscovery.candidates(under: root, maxDepth: maxDepth) + sessionPaths {
+        var sessionSeen = Set<String>()
+        let uniqueSessionPaths = sessionPaths.map(WorktreePolicy.normalized).filter { sessionSeen.insert($0).inserted }
+        for candidate in RepoDiscovery.candidates(under: root, maxDepth: maxDepth) + uniqueSessionPaths {
             do {
                 if let main = try git.mainRepoRoot(containing: candidate) {
                     seen.insert(WorktreePolicy.normalized(main))
@@ -40,11 +42,14 @@ public struct WorktreeScanner: Sendable {
         return seen.sorted()
     }
 
+    /// A failure listing the repo becomes `RepoScan.error`; a failure reading one worktree
+    /// only marks that worktree with `detailError`.
     public func scan(repo: String) -> RepoScan {
+        let repo = WorktreePolicy.normalized(repo)
         do {
             let worktrees = try git.listWorktrees(repo: repo)
                 .filter { !$0.isMain && !$0.isBare }
-                .map { record in try worktree(from: record, repo: repo) }
+                .map { record in worktree(from: record, repo: repo) }
             return RepoScan(repoPath: repo, worktrees: worktrees, error: nil)
         } catch {
             return RepoScan(repoPath: repo, worktrees: [], error: error.localizedDescription)
@@ -60,26 +65,27 @@ public struct WorktreeScanner: Sendable {
         return results.values
     }
 
-    private func worktree(from record: WorktreeRecord, repo: String) throws -> Worktree {
+    private func worktree(from record: WorktreeRecord, repo: String) -> Worktree {
         let path = WorktreePolicy.normalized(record.path)
-        guard !record.isPrunable else {
-            return Worktree(
+        func make(lastActivity: Date?, uncommitted: Int, unpushed: Int, detailError: String? = nil) -> Worktree {
+            Worktree(
                 path: path, repoPath: repo, branch: record.branch, head: record.head,
-                isLocked: record.isLocked, isPrunable: true, lastActivity: nil,
-                uncommittedCount: 0, unpushedCount: 0
+                isLocked: record.isLocked, isPrunable: record.isPrunable, lastActivity: lastActivity,
+                uncommittedCount: uncommitted, unpushedCount: unpushed, detailError: detailError
             )
         }
-        return Worktree(
-            path: path,
-            repoPath: repo,
-            branch: record.branch,
-            head: record.head,
-            isLocked: record.isLocked,
-            isPrunable: false,
-            lastActivity: try git.lastActivity(worktree: path),
-            uncommittedCount: try git.uncommittedCount(worktree: path),
-            unpushedCount: try git.unpushedCount(worktree: path, branch: record.branch)
-        )
+        guard !record.isPrunable else {
+            return make(lastActivity: nil, uncommitted: 0, unpushed: 0)
+        }
+        do {
+            return make(
+                lastActivity: try git.lastActivity(worktree: path),
+                uncommitted: try git.uncommittedCount(worktree: path),
+                unpushed: try git.unpushedCount(worktree: path, branch: record.branch)
+            )
+        } catch {
+            return make(lastActivity: nil, uncommitted: 0, unpushed: 0, detailError: error.localizedDescription)
+        }
     }
 }
 

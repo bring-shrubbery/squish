@@ -29,6 +29,8 @@ public struct Worktree: Identifiable, Equatable, Sendable {
     public let unpushedCount: Int
     /// Allocated bytes on disk; nil while unmeasured.
     public var sizeBytes: Int64?
+    /// Why git could not read this worktree's details; such a worktree is listed but not removable.
+    public let detailError: String?
 
     public init(
         path: String,
@@ -40,7 +42,8 @@ public struct Worktree: Identifiable, Equatable, Sendable {
         lastActivity: Date?,
         uncommittedCount: Int,
         unpushedCount: Int,
-        sizeBytes: Int64? = nil
+        sizeBytes: Int64? = nil,
+        detailError: String? = nil
     ) {
         self.path = path
         self.repoPath = repoPath
@@ -52,6 +55,7 @@ public struct Worktree: Identifiable, Equatable, Sendable {
         self.uncommittedCount = uncommittedCount
         self.unpushedCount = unpushedCount
         self.sizeBytes = sizeBytes
+        self.detailError = detailError
     }
 
     public var agent: WorktreeAgent? { WorktreeAgent.detect(path: path) }
@@ -145,6 +149,7 @@ public enum WorktreePolicy {
 
     public static func removal(for worktree: Worktree, activeSessionPaths: [String]) -> WorktreeRemoval {
         if worktree.isPrunable { return .pruneOnly }
+        if let detailError = worktree.detailError { return .blocked(reason: detailError) }
         if hasActiveSession(worktree, activeSessionPaths: activeSessionPaths) {
             return .blocked(reason: "An agent session is working in this worktree.")
         }
