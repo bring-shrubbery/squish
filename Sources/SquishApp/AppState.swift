@@ -43,6 +43,8 @@ final class AppState: ObservableObject {
     @Published var projectRoot: URL?
     @Published var sessions: [CodingSession] = []
     @Published private(set) var costEntries: [CostLedgerEntry] = []
+    /// Which pricing catalog is in use and when it was last checked.
+    @Published private(set) var pricing: PricingUpdater.Status
     @Published var selectedSection: AppSection = .costs
     @Published var isScanning = false
     @Published var alertsEnabled: Bool {
@@ -62,6 +64,7 @@ final class AppState: ObservableObject {
     }
 
     let hookInstaller = HookInstaller()
+    private let pricingUpdater = PricingUpdater()
     private let controlCenter = AgentControlCenter()
     private let liveChatsNotch = LiveChatsNotchController()
     private var liveChatsTimer: Timer?
@@ -101,6 +104,7 @@ final class AppState: ObservableObject {
         let storedThreshold = defaults.double(forKey: Keys.alertThreshold)
         self.alertThreshold = storedThreshold > 0 ? storedThreshold : 0.8
         self.liveChatsEnabled = defaults.object(forKey: Keys.liveChatsEnabled) as? Bool ?? false
+        self.pricing = pricingUpdater.status
 
         liveChatsNotch.configure(
             onResolve: { [weak self] request, decision in
@@ -116,8 +120,25 @@ final class AppState: ObservableObject {
         NotchAlertController.shared.onWillShow = { [weak self] in self?.liveChatsNotch.suspend() }
         NotchAlertController.shared.onDidHide = { [weak self] in self?.liveChatsNotch.resume() }
 
+        pricingUpdater.onCatalogChange = { [weak self] in self?.pricingCatalogDidChange() }
+        pricingUpdater.start()
+        pricing = pricingUpdater.status
         restoreFolder()
         applyLiveChatsState()
+    }
+
+    /// A newer catalog is in use: re-price the ledger (every stored session, not only the
+    /// live ones) and re-parse nothing, since usage is unchanged.
+    private func pricingCatalogDidChange() {
+        pricing = pricingUpdater.status
+        guard let root = projectRoot else { return }
+        costLedgerTask?.cancel()
+        costLedgerTask = Task { [weak self] in
+            guard let self else { return }
+            let entries = await costLedger.reprice(projectRoot: root)
+            guard !Task.isCancelled, isCurrentProject(root) else { return }
+            if entries != costEntries { costEntries = entries }
+        }
     }
 
     deinit {

@@ -49,7 +49,10 @@ user will read.
    stapled (image and app), and the app is zipped for Sparkle.
 5. **Appcast**: the zip is signed with the Sparkle EdDSA key and
    `scripts/release-appcast.sh` writes the feed.
-6. **Publish**: tag, GitHub release with the dmg, zip and `appcast.xml`, then
+6. **Publish**: tag, GitHub release with the dmg, zip, `appcast.xml`, and the
+   signed pricing catalog (`pricing.json` from `squish-pricing`, its Ed25519
+   signature in `pricing.json.sig`; the app fetches both through
+   `squish.quassum.com/pricing.json` and verifies with `SUPublicEDKey`), then
    call the website's deploy hook.
 
 The same build runs locally on a Mac with the certificate, up to notarization:

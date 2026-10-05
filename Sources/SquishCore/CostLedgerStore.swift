@@ -166,6 +166,19 @@ public actor CostLedgerStore {
         return filteredEntries(projectRoot: projectRoot)
     }
 
+    /// Re-prices every loaded entry the catalog is newer than, for when a newer catalog
+    /// arrives while the app runs. Returns the entries for the project, like `merge`.
+    public func reprice(projectRoot: URL, catalog: PricingCatalog = .current) -> [CostLedgerEntry] {
+        loadIfNeeded(catalog: catalog)
+        for entry in entriesByID.values {
+            if let repriced = repriced(entry, with: catalog) {
+                entriesByID[repriced.id] = repriced
+                persist(repriced)
+            }
+        }
+        return filteredEntries(projectRoot: projectRoot)
+    }
+
     private func loadIfNeeded(catalog: PricingCatalog) {
         guard !hasLoaded else { return }
         hasLoaded = true

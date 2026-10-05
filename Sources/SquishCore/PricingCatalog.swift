@@ -88,13 +88,25 @@ public struct ModelPrice: Equatable, Sendable {
     }
 }
 
-public struct PricingCatalog: Sendable {
+public struct PricingCatalog: Equatable, Sendable {
     public let effectiveDate: Date
     public let prices: [ModelPrice]
 
     public init(effectiveDate: Date, prices: [ModelPrice]) {
         self.effectiveDate = effectiveDate
         self.prices = prices
+    }
+
+    /// The catalog in use: a newer verified download when there is one, else the bundled one.
+    /// Read from any thread; the parsers consult it while history loads.
+    public static var current: PricingCatalog {
+        activeCatalog.lock.withLock { activeCatalog.override } ?? bundled
+    }
+
+    /// Makes `catalog` the one in use, or goes back to the bundled catalog with nil. Only a
+    /// catalog newer than the bundled one is worth activating; the caller decides.
+    public static func activate(_ catalog: PricingCatalog?) {
+        activeCatalog.lock.withLock { activeCatalog.override = catalog }
     }
 
     public func price(for model: String, provider: AgentProvider) -> ModelPrice? {
@@ -128,7 +140,7 @@ public struct PricingCatalog: Sendable {
 
     /// List prices from each provider's pricing page on 5 Oct 2026. Where a page shows a
     /// promotional rate with an end date, that rate is used and noted.
-    public static let current = PricingCatalog(
+    public static let bundled = PricingCatalog(
         effectiveDate: ISO8601DateFormatter().date(from: "2026-10-05T00:00:00Z")!,
         prices: [
             // OpenAI. Long context is a request over 272K input tokens: 2x input and cache, 1.5x output.
@@ -183,3 +195,10 @@ public struct PricingCatalog: Sendable {
         ]
     )
 }
+
+private final class ActiveCatalog: @unchecked Sendable {
+    let lock = NSLock()
+    var override: PricingCatalog?
+}
+
+private let activeCatalog = ActiveCatalog()

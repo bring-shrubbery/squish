@@ -109,10 +109,7 @@ struct CostDashboardView: View {
                     }
                 }
             } footer: {
-                FormFooter(
-                    "Prices are API equivalents in USD, updated \(PricingCatalog.current.effectiveDate.formatted(date: .abbreviated, time: .omitted)). "
-                        + "Subscription plans may differ."
-                )
+                FormFooter(pricingFooter)
             }
         }
         .navigationSubtitle(subtitle(for: report))
@@ -142,6 +139,22 @@ struct CostDashboardView: View {
             if let raw = notification.object as? String, let next = CostPeriod(rawValue: raw) { period = next }
         }
         #endif
+    }
+
+    /// "Prices are API equivalents in USD from 5 Oct 2026, downloaded today. …"
+    private var pricingFooter: String {
+        let date = appState.pricing.effectiveDate.formatted(date: .abbreviated, time: .omitted)
+        var text = "Prices are API equivalents in USD from \(date)"
+        switch appState.pricing.source {
+        case .downloaded:
+            text += ", downloaded by Squish"
+        case .bundled:
+            text += ", bundled with this version"
+        }
+        if let check = appState.pricing.lastCheck {
+            text += "; checked for newer prices \(check.formatted(.relative(presentation: .named)))"
+        }
+        return text + ". Subscription plans may differ."
     }
 
     private var periodPhrase: String {

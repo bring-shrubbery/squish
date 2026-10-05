@@ -1,2 +1,4 @@
 /appcast.xml  https://github.com/bring-shrubbery/squish/releases/latest/download/appcast.xml  302
 /download     https://github.com/bring-shrubbery/squish/releases/latest/download/Squish-macos-arm64.dmg  302
+/pricing.json      https://github.com/bring-shrubbery/squish/releases/latest/download/pricing.json      302
+/pricing.json.sig  https://github.com/bring-shrubbery/squish/releases/latest/download/pricing.json.sig  302

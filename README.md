@@ -53,13 +53,15 @@ Squish also picks up matching local `.codex`, `.claude` and `.gemini` folders be
 
 ## Pricing
 
-Costs are API-equivalent estimates from the providers' published prices. The catalog is versioned in [`Sources/SquishCore/PricingCatalog.swift`](Sources/SquishCore/PricingCatalog.swift) (currently dated 10 July 2026), from:
+Costs are API-equivalent estimates from the providers' published prices. The catalog is versioned in [`Sources/SquishCore/PricingCatalog.swift`](Sources/SquishCore/PricingCatalog.swift) (currently dated 5 October 2026), from:
 
 - [OpenAI model pricing](https://developers.openai.com/api/docs/models)
 - [Anthropic model pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 - [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
 
 Codex, Claude and Gemini subscriptions bill differently. Models without a known price stay visible but are left out of the totals until a price is added.
+
+Prices update without waiting for an app update: every release publishes its catalog as `pricing.json`, signed with the same key as the app's updates, and Squish downloads it at launch and every six hours, checks the signature, and switches to it when it is newer than the catalog it shipped with. Stored sessions are re-priced at the new rates. The Costs page footer says which catalog is in use.
 
 ## How it stays light
 

@@ -250,6 +250,18 @@ jobs:
             echo "::error::sign_update did not produce a signature and length"; exit 1
           fi
 
+          # The pricing catalog this build knows, signed with the same key: installed copies
+          # download it from squish.quassum.com/pricing.json and price new models without
+          # waiting for the update.
+          swift build -c release --arch arm64 --product squish-pricing
+          "$(swift build -c release --arch arm64 --show-bin-path)/squish-pricing" > dist/pricing.json
+          pricing_signature=$("$TOOLS/bin/sign_update" --ed-key-file "$KEY" dist/pricing.json)
+          sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' <<< "$pricing_signature" > dist/pricing.json.sig
+          if [ ! -s dist/pricing.json.sig ]; then
+            echo "::error::sign_update did not sign pricing.json"; exit 1
+          fi
+          echo "pricing.json: $(wc -c < dist/pricing.json) bytes, signature $(cat dist/pricing.json.sig)"
+
           # The notes: the commits since the last release, as HTML inside the feed (what the
           # update prompt shows) and as Markdown for the release page.
           previous=$(scripts/release-version.sh --previous)
@@ -280,6 +292,8 @@ jobs:
             dist/Squish-${{ env.TAG }}-macos-arm64.zip
             dist/Squish-macos-arm64.dmg
             dist/appcast.xml
+            dist/pricing.json
+            dist/pricing.json.sig
           if-no-files-found: error
 
       - name: Remove the signing keychain
@@ -306,6 +320,8 @@ jobs:
             dist/Squish-${{ env.TAG }}-macos-arm64.zip
             dist/Squish-macos-arm64.dmg
             dist/appcast.xml
+            dist/pricing.json
+            dist/pricing.json.sig
 
       - name: Rebuild the website
         env:
