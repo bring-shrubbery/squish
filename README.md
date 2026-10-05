@@ -27,19 +27,20 @@ Squish checks for updates automatically through [Sparkle](https://sparkle-projec
 1. **Choose a folder.** On first launch, pick the folder that holds your projects (later: **File → Choose Project Folder…**, `⇧⌘O`). Squish remembers it.
 2. **Read the costs.** Sessions appear newest first while older history indexes in the background. Each one shows its tokens, its estimated cost and how full its context is.
 3. **Set the alert threshold.** Under **Compact alerts**, choose when the notch alert fires, or preview it.
-4. **Turn on Live chats** if you want to answer Claude Code from the notch. Squish installs its hook (below); a preview button shows what a request looks like.
+4. **Turn on Live chats** if you want to answer Claude Code and Codex from the notch. Squish installs its hook (below); a preview button shows what a request looks like.
 5. **Leave it running.** `⌘Q` closes the window and keeps Squish in the menu bar, where it goes on watching your sessions, so compact alerts and live chats work without the window. The menu bar icon shows how many sessions are active, reopens the window, and has the real **Quit Squish**. **Squish → Settings…** (`⌘,`) turns this off, so `⌘Q` quits, and can open Squish at login.
 
 ## Live chats and the Claude Code hook
 
-With Live chats on, Claude Code permission prompts and `AskUserQuestion` questions open the notch with one tab per waiting session. Approve or deny a tool, pick one of the offered answers, or type your own.
+With Live chats on, Claude Code and Codex permission prompts, and Claude Code `AskUserQuestion` questions, open the notch with one tab per waiting session. Approve or deny a tool, pick one of the offered answers, or type your own.
 
-- **One hook, nothing else.** Squish adds a single `PermissionRequest` hook to `~/.claude/settings.json` that runs `squish-hook`, a small program bundled inside the app. It backs up the original file once (`settings.json.squish-backup`), leaves your other hooks alone, and removes its entry when you turn Live chats off.
-- **Only real prompts.** `PermissionRequest` fires only when Claude Code would actually ask you, so tools your permission mode already allows never reach the notch.
-- **Never hangs a session.** The hook passes straight through to Claude Code's own prompt unless Squish is running and watching the session's folder, and falls back to that prompt after five minutes without an answer.
+- **One hook per agent, nothing else.** Squish adds a single `PermissionRequest` hook that runs `squish-hook`, a small program bundled inside the app, to `~/.claude/settings.json` and to `~/.codex/hooks.json` (and sets `hooks = true` under `[features]` in `~/.codex/config.toml`, which Codex needs to read hooks at all). It backs up each original file once (`*.squish-backup`), leaves your other hooks alone, and removes its entries when you turn Live chats off. Agents whose folder does not exist are skipped.
+- **Only real prompts.** `PermissionRequest` fires only when the agent would actually ask you, so tools your permission mode already allows never reach the notch.
+- **Never hangs a session.** The hook passes straight through to the agent's own prompt unless Squish is running and watching the session's folder, and falls back to that prompt after five minutes without an answer.
 - **No surprise permissions.** Allow and deny need nothing from macOS. Accessibility is requested only the first time you send an answer to a question, so Squish can type it into the terminal; without it, the answer is copied to the clipboard.
+- **Gemini CLI shows up as waiting.** Gemini's hooks cannot answer a permission prompt, so Squish adds a `Notification` hook to `~/.gemini/settings.json` that marks the session as waiting in the notch, with a button to open its folder; the answer itself goes in Gemini's terminal, and the notice clears once the session moves on.
 
-Codex and Gemini CLI sessions appear as active chats too, but are answered in their own terminal. Turn Live chats off before deleting Squish, so the hook entry is removed.
+Turn Live chats off before deleting Squish, so the hook entries are removed.
 
 ## Where it looks
 

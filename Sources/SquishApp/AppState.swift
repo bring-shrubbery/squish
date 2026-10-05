@@ -108,7 +108,11 @@ final class AppState: ObservableObject {
 
         liveChatsNotch.configure(
             onResolve: { [weak self] request, decision in
-                self?.controlCenter.resolve(request, with: decision)
+                if request.isDecidable {
+                    self?.controlCenter.resolve(request, with: decision)
+                } else {
+                    self?.controlCenter.dismiss(request)
+                }
             },
             onOpenTerminal: { chat in
                 NSWorkspace.shared.open(URL(fileURLWithPath: chat.session.projectPath))
@@ -257,6 +261,14 @@ final class AppState: ObservableObject {
 
     private func refreshLiveChats() {
         guard liveChatsEnabled else { return }
+        // A "waiting" notice from Gemini CLI has no answer channel; once the session's log
+        // moves on, the user answered in the terminal, so the notice goes away by itself.
+        for request in controlCenter.pendingRequests where !request.isDecidable {
+            if let session = sessions.first(where: { $0.id == request.sessionId }),
+               session.updatedAt > request.createdAt.addingTimeInterval(2) {
+                controlCenter.dismiss(request)
+            }
+        }
         let pending = controlCenter.pendingRequests
         let chats = LiveActivity.chats(sessions: sessions, pending: pending, now: Date())
         liveChatsNotch.update(chats: chats, pending: pending)

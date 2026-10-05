@@ -186,7 +186,7 @@ private struct LiveChatRow: View {
 
     @ViewBuilder
     private var statuscontrol: some View {
-        if chat.session.provider == .claude, let request = pendingForChat {
+        if let request = pendingForChat, request.isDecidable {
             HStack(spacing: 6) {
                 Button("Deny") { model.onResolve?(request, .deny) }
                     .buttonStyle(NotchButtonStyle(tint: AppColors.magenta))
@@ -260,7 +260,7 @@ struct RequestPromptView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Circle()
-                            .fill(AppColors.pink)
+                            .fill(liveProviderColor(request.provider))
                             .frame(width: 6, height: 6)
                         Text(shortLabel(for: request))
                             .font(.system(size: 10, weight: .semibold))
@@ -287,11 +287,14 @@ struct RequestPromptView: View {
             HStack(spacing: 8) {
                 Image(systemName: isQuestion ? "questionmark.bubble.fill" : "lock.shield.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppColors.pink)
+                    .foregroundStyle(liveProviderColor(request.provider))
                 Text(isQuestion ? "Question" : request.toolName)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
                 Spacer()
+                Text(request.provider.displayName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
             }
 
             Text(request.inputSummary)
@@ -304,11 +307,31 @@ struct RequestPromptView: View {
                 .padding(10)
                 .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
 
-            if isQuestion {
+            if !request.isDecidable {
+                waitingControls(for: request)
+            } else if isQuestion {
                 answerField(for: request)
             } else {
                 permissionButtons(for: request)
             }
+        }
+    }
+
+    /// Gemini CLI takes the answer in its own terminal; the notch can only point there.
+    private func waitingControls(for request: PendingRequest) -> some View {
+        HStack(spacing: 8) {
+            Text("Answer in the terminal")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer(minLength: 0)
+            Button("Dismiss") { model.onResolve?(request, .deny) }
+                .buttonStyle(NotchButtonStyle(tint: .white.opacity(0.14)))
+            Button("Open") {
+                if let chat = model.chats.first(where: { $0.session.id == request.sessionId }) {
+                    model.onOpenTerminal?(chat)
+                }
+            }
+            .buttonStyle(NotchButtonStyle(tint: AppColors.cyan))
         }
     }
 

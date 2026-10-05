@@ -13,12 +13,11 @@ struct LiveChatsSettingsView: View {
                         .labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow("Claude Code hook") {
-                    SetupStatus(
-                        ok: appState.liveChatsHookInstalled,
-                        text: appState.liveChatsHookInstalled ? "Installed" : "Not installed"
-                    )
-                }
+                HookRow(name: "Claude Code hook", status: appState.hookInstaller.status(for: .claude))
+                SettingsDivider()
+                HookRow(name: "Codex hook", status: appState.hookInstaller.status(for: .codex))
+                SettingsDivider()
+                HookRow(name: "Gemini CLI hook", status: appState.hookInstaller.status(for: .gemini))
                 SettingsDivider()
                 SettingsRow("Accessibility") {
                     HStack(spacing: 10) {
@@ -38,15 +37,38 @@ struct LiveChatsSettingsView: View {
                 }
             } footer: {
                 FormFooter(
-                    "Active chats widen the notch. When Claude Code asks for permission or a question, "
-                        + "the notch opens so you can approve, deny or reply, one tab per waiting session. "
-                        + "Turning this on adds a hook to ~/.claude/settings.json. Accessibility lets Squish "
-                        + "type replies into the terminal; approvals work without it. Codex and Gemini are "
-                        + "listed but answer in their own terminal."
+                    "Active chats widen the notch. When Claude Code or Codex asks for permission, or "
+                        + "Claude Code asks a question, the notch opens so you can approve, deny or reply, "
+                        + "one tab per waiting session. Gemini CLI only reports that it is waiting; the "
+                        + "answer goes in its terminal. Turning this on adds a hook to ~/.claude/settings.json, "
+                        + "~/.codex/hooks.json (with hooks enabled in config.toml) and ~/.gemini/settings.json "
+                        + "for the agents you have. Accessibility lets Squish type replies into the "
+                        + "terminal; approvals work without it."
                 )
             }
         }
         .navigationSubtitle(appState.liveChatsEnabled ? "On" : "Off")
+    }
+}
+
+private struct HookRow: View {
+    let name: String
+    let status: HookInstaller.Status
+
+    var body: some View {
+        SettingsRow(name) {
+            switch status {
+            case .installed:
+                SetupStatus(ok: true, text: "Installed")
+            case .notInstalled:
+                SetupStatus(ok: false, text: "Not installed")
+            case .agentNotFound:
+                Text("Not found")
+                    .foregroundStyle(.tertiary)
+            case .needsManualStep:
+                SetupStatus(ok: false, text: "Add hooks = true under [features] in ~/.codex/config.toml")
+            }
+        }
     }
 }
 

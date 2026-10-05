@@ -24,6 +24,9 @@ public struct PendingRequest: Codable, Equatable, Identifiable, Sendable {
     public let pid: Int?
     public let ppid: Int?
     public let createdAt: Date
+    /// False when the agent only told us it is waiting and takes the answer in its own
+    /// terminal (Gemini CLI); absent in files written by older versions, which means true.
+    private let decidable: Bool?
 
     public init(
         id: String,
@@ -36,7 +39,8 @@ public struct PendingRequest: Codable, Equatable, Identifiable, Sendable {
         tty: String?,
         pid: Int?,
         ppid: Int?,
-        createdAt: Date
+        createdAt: Date,
+        isDecidable: Bool = true
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -49,6 +53,33 @@ public struct PendingRequest: Codable, Equatable, Identifiable, Sendable {
         self.pid = pid
         self.ppid = ppid
         self.createdAt = createdAt
+        self.decidable = isDecidable ? nil : false
+    }
+
+    /// Whether Squish can answer it (allow, deny or reply) rather than only show it.
+    public var isDecidable: Bool { decidable ?? true }
+
+    /// The agent the request came from, from the session id's prefix.
+    public var provider: AgentProvider {
+        if sessionId.hasPrefix("codex:") { return .codex }
+        if sessionId.hasPrefix("gemini:") { return .gemini }
+        return .claude
+    }
+}
+
+/// Which agent a hook is speaking for, from the JSON it receives: Codex and Gemini name
+/// their transcript, Claude Code is the default.
+public enum HookProvider {
+    public static func provider(transcriptPath: String?) -> AgentProvider {
+        guard let transcriptPath else { return .claude }
+        if transcriptPath.contains("/.codex/") { return .codex }
+        if transcriptPath.contains("/.gemini/") { return .gemini }
+        return .claude
+    }
+
+    /// The Squish session id for the hook's session: `codex:<id>`, `gemini:<id>`, `claude:<id>`.
+    public static func sessionID(_ raw: String?, provider: AgentProvider) -> String {
+        "\(provider.rawValue):\(raw ?? "unknown")"
     }
 }
 

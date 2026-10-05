@@ -8,13 +8,35 @@ import Foundation
 /// Claude would actually prompt the user, so auto-approved tool calls never reach
 /// the notch.
 public enum HookSettings {
-    private static let event = "PermissionRequest"
-    private static let matcherAll = "*"
-    private static let hookTimeout = 310
+    /// Where the hook goes in one agent's settings. Claude Code and Codex share the schema
+    /// (`PermissionRequest`, timeout in seconds); Gemini CLI only tells us it is waiting
+    /// (`Notification`, timeout in milliseconds) and matches everything when no matcher is set.
+    public struct Registration: Equatable, Sendable {
+        public let event: String
+        public let matcher: String?
+        public let timeout: Int
 
-    /// True if a command hook with `command` is present under any `PreToolUse` matcher.
-    public static func installed(in settings: [String: Any], command: String) -> Bool {
-        for matcher in eventMatchers(in: settings) {
+        public init(event: String, matcher: String?, timeout: Int) {
+            self.event = event
+            self.matcher = matcher
+            self.timeout = timeout
+        }
+
+        /// Claude Code (`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`).
+        public static let permissionRequest = Registration(event: "PermissionRequest", matcher: "*", timeout: 310)
+        /// Gemini CLI (`~/.gemini/settings.json`): fires when a tool waits for permission.
+        public static let geminiNotification = Registration(event: "Notification", matcher: nil, timeout: 5_000)
+    }
+
+    private static let event = Registration.permissionRequest.event
+
+    /// True if a command hook with `command` is present under the registration's event.
+    public static func installed(
+        in settings: [String: Any],
+        command: String,
+        registration: Registration = .permissionRequest
+    ) -> Bool {
+        for matcher in dictionaries(dictionary(settings["hooks"])?[registration.event]) {
             if commandHooks(in: matcher).contains(where: { $0["command"] as? String == command }) {
                 return true
             }
@@ -23,36 +45,46 @@ public enum HookSettings {
     }
 
     /// Returns a copy of `settings` with the Squish hook merged in (idempotent).
-    public static func installing(_ command: String, into settings: [String: Any]) -> [String: Any] {
+    public static func installing(
+        _ command: String,
+        into settings: [String: Any],
+        registration: Registration = .permissionRequest
+    ) -> [String: Any] {
         // Migrate away any legacy PreToolUse registration of the same command from
         // an older Squish version, which would otherwise intercept every tool call.
         let migrated = removing(command, fromEvent: "PreToolUse", in: settings)
-        guard !installed(in: migrated, command: command) else { return migrated }
+        guard !installed(in: migrated, command: command, registration: registration) else { return migrated }
 
         var result = migrated
         var hooks = dictionary(result["hooks"]) ?? [:]
-        var eventHooks = dictionaries(hooks[event])
-        let commandHook: [String: Any] = ["type": "command", "command": command, "timeout": hookTimeout]
+        var eventHooks = dictionaries(hooks[registration.event])
+        let commandHook: [String: Any] = ["type": "command", "command": command, "timeout": registration.timeout]
 
-        if let index = eventHooks.firstIndex(where: { ($0["matcher"] as? String) == matcherAll }) {
+        if let index = eventHooks.firstIndex(where: { ($0["matcher"] as? String) == registration.matcher }) {
             var matcher = eventHooks[index]
             var matcherHooks = dictionaries(matcher["hooks"])
             matcherHooks.append(commandHook)
             matcher["hooks"] = matcherHooks
             eventHooks[index] = matcher
+        } else if let matcher = registration.matcher {
+            eventHooks.append(["matcher": matcher, "hooks": [commandHook]])
         } else {
-            eventHooks.append(["matcher": matcherAll, "hooks": [commandHook]])
+            eventHooks.append(["hooks": [commandHook]])
         }
 
-        hooks[event] = eventHooks
+        hooks[registration.event] = eventHooks
         result["hooks"] = hooks
         return result
     }
 
     /// Returns a copy of `settings` with only the Squish hook removed, pruning any
     /// containers left empty.
-    public static func removing(_ command: String, from settings: [String: Any]) -> [String: Any] {
-        removing(command, fromEvent: event, in: settings)
+    public static func removing(
+        _ command: String,
+        from settings: [String: Any],
+        registration: Registration = .permissionRequest
+    ) -> [String: Any] {
+        removing(command, fromEvent: registration.event, in: settings)
     }
 
     /// Removes the Squish command hook from a specific event, pruning empties.
@@ -92,10 +124,6 @@ public enum HookSettings {
     }
 
     // MARK: - Internals
-
-    private static func eventMatchers(in settings: [String: Any]) -> [[String: Any]] {
-        dictionaries(dictionary(settings["hooks"])?[event])
-    }
 
     private static func commandHooks(in matcher: [String: Any]) -> [[String: Any]] {
         dictionaries(matcher["hooks"]).filter { ($0["type"] as? String) == "command" }

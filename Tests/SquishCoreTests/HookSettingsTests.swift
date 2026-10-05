@@ -110,3 +110,61 @@ final class HookSettingsTests: XCTestCase {
         XCTAssertFalse(HookSettings.installed(in: existing, command: cmd))
     }
 }
+
+final class HookRegistrationTests: XCTestCase {
+    let cmd = "/Applications/Squish.app/Contents/MacOS/squish-hook"
+
+    func testGeminiNotificationHookHasNoMatcherAndMillisecondTimeout() {
+        let out = HookSettings.installing(cmd, into: [:], registration: .geminiNotification)
+        let notification = (out["hooks"] as? [String: Any])?["Notification"] as? [[String: Any]]
+        XCTAssertEqual(notification?.count, 1)
+        XCTAssertNil(notification?.first?["matcher"])
+        let hook = (notification?.first?["hooks"] as? [[String: Any]])?.first
+        XCTAssertEqual(hook?["command"] as? String, cmd)
+        XCTAssertEqual(hook?["timeout"] as? Int, 5_000)
+        XCTAssertTrue(HookSettings.installed(in: out, command: cmd, registration: .geminiNotification))
+        XCTAssertFalse(HookSettings.installed(in: out, command: cmd))
+
+        let twice = HookSettings.installing(cmd, into: out, registration: .geminiNotification)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: twice, options: [.sortedKeys]),
+                       try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]))
+        let removed = HookSettings.removing(cmd, from: out, registration: .geminiNotification)
+        XCTAssertNil(removed["hooks"])
+    }
+
+    func testCodexHooksFileKeepsItsDescription() {
+        let existing: [String: Any] = ["description": "mine", "hooks": ["SessionStart": [["hooks": [["type": "command", "command": "/usr/bin/true"]]]]]]
+        let out = HookSettings.installing(cmd, into: existing)
+        XCTAssertEqual(out["description"] as? String, "mine")
+        XCTAssertTrue(HookSettings.installed(in: out, command: cmd))
+        XCTAssertNotNil((out["hooks"] as? [String: Any])?["SessionStart"])
+    }
+
+    func testPendingRequestDecidabilityAndProvider() throws {
+        let shown = PendingRequest(id: "g", sessionId: "gemini:1", cwd: "/p", kind: .permission, toolName: "write_file",
+                                   inputSummary: "x", options: nil, tty: nil, pid: nil, ppid: nil, createdAt: Date(), isDecidable: false)
+        XCTAssertFalse(shown.isDecidable)
+        XCTAssertEqual(shown.provider, .gemini)
+        let decoded = try JSONDecoder().decode(PendingRequest.self, from: try JSONEncoder().encode(shown))
+        XCTAssertFalse(decoded.isDecidable)
+
+        // Files from older versions have no flag: they were all answerable Claude requests.
+        let legacy = Data("""
+        {"id":"c","sessionId":"claude:1","cwd":"/p","kind":"permission","toolName":"Bash","inputSummary":"ls","createdAt":1000}
+        """.utf8)
+        let old = try JSONDecoder().decode(PendingRequest.self, from: legacy)
+        XCTAssertTrue(old.isDecidable)
+        XCTAssertEqual(old.provider, .claude)
+        XCTAssertEqual(PendingRequest(id: "x", sessionId: "codex:9", cwd: "/", kind: .permission, toolName: "Bash", inputSummary: "",
+                                      options: nil, tty: nil, pid: nil, ppid: nil, createdAt: Date()).provider, .codex)
+    }
+
+    func testHookProviderFromTranscriptPath() {
+        XCTAssertEqual(HookProvider.provider(transcriptPath: "/Users/a/.codex/sessions/2026/10/05/rollout.jsonl"), .codex)
+        XCTAssertEqual(HookProvider.provider(transcriptPath: "/Users/a/.gemini/tmp/abc/chats/session.json"), .gemini)
+        XCTAssertEqual(HookProvider.provider(transcriptPath: "/Users/a/.claude/projects/-p/s.jsonl"), .claude)
+        XCTAssertEqual(HookProvider.provider(transcriptPath: nil), .claude)
+        XCTAssertEqual(HookProvider.sessionID("abc", provider: .codex), "codex:abc")
+        XCTAssertEqual(HookProvider.sessionID(nil, provider: .claude), "claude:unknown")
+    }
+}

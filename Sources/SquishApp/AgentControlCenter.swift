@@ -70,6 +70,13 @@ final class AgentControlCenter: ObservableObject {
         pendingRequests.removeAll { $0.id == request.id }
     }
 
+    /// Drops a request Squish could only show (Gemini CLI): the user answered it in the
+    /// terminal, or wants it out of the notch.
+    func dismiss(_ request: PendingRequest) {
+        spool.clearRequest(id: request.id)
+        pendingRequests.removeAll { $0.id == request.id }
+    }
+
     /// Inject a request directly (used by the settings Preview button).
     func injectPreview(_ request: PendingRequest) {
         try? spool.ensureDirectories()
