@@ -12,6 +12,7 @@ import SwiftUI
 ///   select <n>       selects the first n rows of the Worktrees table
 ///   filters          toggles the Worktrees filter popover
 ///   remove           opens the removal confirmation for the selection
+///   unpriced         toggles the Costs page's unpriced-models popover
 ///   scroll <dy> [n]  posts n scroll-wheel events of dy points to the window (default 1)
 ///   hover <x> <y>    posts a mouse-moved event at window coordinates
 ///   snap <name>      writes <name>-<n>.png for every visible window (main window, popovers, sheets)
@@ -20,6 +21,7 @@ import SwiftUI
 enum DebugSnapshots {
     static let filtersNotification = Notification.Name("squish.debug.filters")
     static let removeNotification = Notification.Name("squish.debug.remove")
+    static let unpricedNotification = Notification.Name("squish.debug.unpriced")
 
     private static var handled = 0
     private static var timer: Timer?
@@ -56,6 +58,8 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: filtersNotification, object: nil)
         case "remove":
             NotificationCenter.default.post(name: removeNotification, object: nil)
+        case "unpriced":
+            NotificationCenter.default.post(name: unpricedNotification, object: nil)
         case "scroll":
             let parts = argument.split(separator: " ").compactMap { Int($0) }
             let dy = parts.first ?? -10

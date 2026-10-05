@@ -1,9 +1,11 @@
+import AppKit
 import Charts
 import SquishCore
 import SwiftUI
 
 struct CostDashboardView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var isShowingUnpriced = false
 
     var body: some View {
         let snapshot = CostDashboardSnapshot(entries: appState.costEntries)
@@ -108,9 +110,23 @@ struct CostDashboardView: View {
                     Text("Sessions")
                     Spacer()
                     if snapshot.unpricedSessionCount > 0 {
-                        Text("\(snapshot.unpricedSessionCount) without pricing")
+                        Button {
+                            isShowingUnpriced.toggle()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text("\(snapshot.unpricedSessionCount) without pricing")
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                            }
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Which models have no price in the catalog")
+                        .popover(isPresented: $isShowingUnpriced, arrowEdge: .bottom) {
+                            UnpricedModelsPopover(models: snapshot.unpricedModels)
+                        }
                     }
                 }
             } footer: {
@@ -118,6 +134,11 @@ struct CostDashboardView: View {
             }
         }
         .navigationSubtitle(subtitle)
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: DebugSnapshots.unpricedNotification)) { _ in
+            isShowingUnpriced.toggle()
+        }
+        #endif
     }
 
     private var subtitle: String {
@@ -214,6 +235,75 @@ private struct SessionCostRow: View, Equatable {
     }
 }
 
+/// A model the catalog has no price for, and how many sessions used it.
+struct UnpricedModel: Identifiable {
+    let provider: AgentProvider
+    let model: String
+    let count: Int
+
+    var id: String { "\(provider.rawValue):\(model)" }
+
+    var line: String {
+        "\(model) · \(provider.displayName) · \(count == 1 ? "1 session" : "\(count) sessions")"
+    }
+}
+
+/// The models missing from the pricing catalog, with a copy button for the list.
+private struct UnpricedModelsPopover: View {
+    let models: [UnpricedModel]
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Models Without Pricing")
+                    .font(.headline)
+                Spacer()
+                Button(copied ? "Copied" : "Copy") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(models.map(\.line).joined(separator: "\n"), forType: .string)
+                    copied = true
+                }
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(models) { entry in
+                        HStack(spacing: 10) {
+                            ProviderIcon(provider: entry.provider)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(entry.model)
+                                    .textSelection(.enabled)
+                                Text(entry.provider.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 12)
+                            Text(entry.count == 1 ? "1 session" : "\(entry.count) sessions")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        if entry.id != models.last?.id {
+                            Divider().padding(.leading, 52)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 320)
+        }
+        .frame(width: 380)
+    }
+}
+
 private struct DailyCost: Identifiable {
     let date: Date
     let amount: Double
@@ -228,6 +318,8 @@ private struct CostDashboardSnapshot {
     let cachedReadTokens: Int
     let outputTokens: Int
     let dailyCosts: [DailyCost]
+    /// Most used first.
+    let unpricedModels: [UnpricedModel]
 
     init(entries: [CostLedgerEntry]) {
         let priced = entries.compactMap { entry in
@@ -247,6 +339,16 @@ private struct CostDashboardSnapshot {
             DailyCost(date: date, amount: rows.reduce(0) { $0 + $1.cost.total })
         }
         .sorted { $0.date < $1.date }
+
+        let unpriced = Dictionary(grouping: entries.filter { $0.cost == nil }) {
+            "\($0.session.provider.rawValue):\($0.session.model)"
+        }
+        unpricedModels = unpriced.values.compactMap { group in
+            group.first.map { UnpricedModel(provider: $0.session.provider, model: $0.session.model, count: group.count) }
+        }
+        .sorted { lhs, rhs in
+            lhs.count != rhs.count ? lhs.count > rhs.count : lhs.model < rhs.model
+        }
     }
 }
 
