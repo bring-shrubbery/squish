@@ -17,6 +17,8 @@ final class NotchAlertController {
     var onWillShow: (() -> Void)?
     /// Called once the alert has fully hidden and nothing is replacing it.
     var onDidHide: (() -> Void)?
+    /// The alert's Compact button: sends the command to the session's terminal.
+    var onCompact: ((CodingSession) -> CompactionSender.Delivery)?
 
     private init() {}
 
@@ -25,9 +27,10 @@ final class NotchAlertController {
         onWillShow?()
 
         let previousNotch = notch
+        let onCompact = onCompact
         let nextNotch = AlertNotch(style: .notch) {
             AnyView(
-                NotchAlertView(session: session, threshold: threshold, isPreview: isPreview)
+                NotchAlertView(session: session, threshold: threshold, isPreview: isPreview, onCompact: onCompact)
                     .environment(\.colorScheme, .dark)
             )
         }
@@ -63,6 +66,8 @@ private struct NotchAlertView: View {
     let session: CodingSession
     let threshold: Double
     let isPreview: Bool
+    let onCompact: ((CodingSession) -> CompactionSender.Delivery)?
+    @State private var delivery: CompactionSender.Delivery?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -95,21 +100,41 @@ private struct NotchAlertView: View {
                     ProgressView(value: session.contextFraction)
                         .progressViewStyle(.linear)
                         .tint(providerColor)
-                        .frame(width: 150)
+                        .frame(width: 120)
                     Text("\(Int(session.contextFraction * 100))% context")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
 
             Spacer(minLength: 4)
 
-            Text("/compact")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(.white.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .trailing, spacing: 5) {
+                Button {
+                    guard delivery == nil else { return }
+                    delivery = onCompact?(session)
+                } label: {
+                    Text(delivery?.label ?? Compaction.command(for: session.provider))
+                        .font(.system(size: 12, weight: .semibold, design: delivery == nil ? .monospaced : .default))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            (delivery == nil ? providerColor.opacity(0.35) : Color.white.opacity(0.11)),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(delivery == nil ? "Send the command to the session's terminal" : "")
+                if let estimate = Compaction.estimatedCost(for: session) {
+                    Text("about \(currency(estimate))")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
         }
         .frame(width: 390)
         .padding(.horizontal, 18)

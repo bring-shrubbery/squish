@@ -14,6 +14,7 @@ import SwiftUI
 ///   remove           opens the removal confirmation for the selection
 ///   unpriced         toggles the Costs page's unpriced-models popover
 ///   period <today|week|month|all>   selects the Costs page's period
+///   previewalert     shows the compact alert in the notch, as the Preview button does
 ///   quitcommand      what the app menu's Quit Squish (⌘Q) does
 ///   open             what the menu bar item's Open Squish does
 ///   front            appends the frontmost app and the window count to <dir>/front.log
@@ -69,6 +70,8 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: removeNotification, object: nil)
         case "unpriced":
             NotificationCenter.default.post(name: unpricedNotification, object: nil)
+        case "previewalert":
+            appState.previewAlert()
         case "period":
             NotificationCenter.default.post(name: periodNotification, object: argument)
         case "quitcommand":

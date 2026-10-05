@@ -47,7 +47,9 @@ struct CompactAlertsView: View {
                 FormFooter(
                     "Squish checks changed session logs every second and shows the reminder once, "
                         + "naming the session that is close to its limit. It arms again after the context "
-                        + "drops. On Macs without a notch the reminder appears at the top of the screen."
+                        + "drops. On Macs without a notch the reminder appears at the top of the screen. "
+                        + "Compact sends the command to the session's tab in Terminal or iTerm2, which "
+                        + "macOS asks you to allow once; in other terminals it copies the command to paste."
                 )
             }
 
@@ -126,9 +128,19 @@ private enum CompactSessionSort: String, CaseIterable, Identifiable {
 private struct SessionContextRow: View, Equatable {
     let session: CodingSession
     let threshold: Double
+    @State private var delivery: CompactionSender.Delivery?
+
+    static func == (lhs: SessionContextRow, rhs: SessionContextRow) -> Bool {
+        lhs.session == rhs.session && lhs.threshold == rhs.threshold
+    }
 
     private var isOver: Bool { session.contextFraction >= threshold }
     private var isClose: Bool { !isOver && session.contextFraction >= threshold - 0.15 }
+
+    /// "about $0.12 to compact", when the model is priced.
+    private var estimate: String? {
+        Compaction.estimatedCost(for: session).map { "about \(currency($0)) to compact" }
+    }
 
     private var tint: Color {
         if isOver { return .red }
@@ -148,6 +160,15 @@ private struct SessionContextRow: View, Equatable {
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
+            if isOver || isClose {
+                Button(delivery?.label ?? "Compact") {
+                    guard delivery == nil else { return }
+                    delivery = CompactionSender.compact(session)
+                }
+                .controlSize(.small)
+                .disabled(delivery != nil)
+                .help(estimate ?? "Send the compact command to the session's terminal")
+            }
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 8) {
                     if isOver {
@@ -165,6 +186,11 @@ private struct SessionContextRow: View, Equatable {
                 ProgressView(value: min(session.contextFraction, 1))
                     .tint(tint)
                     .frame(width: 140)
+                if isOver || isClose, let estimate {
+                    Text(estimate)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 8)
