@@ -17,6 +17,7 @@ import SwiftUI
 ///   previewalert     shows the compact alert in the notch, as the Preview button does
 ///   quitcommand      what the app menu's Quit Squish (⌘Q) does
 ///   open             what the menu bar item's Open Squish does
+///   closewindow      closes the main window, as ⌘W does
 ///   front            appends the frontmost app and the window count to <dir>/front.log
 ///   sheet <1|2>      presses the first or second button of the window's alert sheet
 ///   settings         opens the Settings window
@@ -78,6 +79,8 @@ enum DebugSnapshots {
             lifecycle.quitCommand()
         case "open":
             lifecycle.open()
+        case "closewindow":
+            NSApp.windows.first { $0.isVisible && !($0 is NSPanel) && $0.styleMask.contains(.closable) }?.performClose(nil)
         case "sheet":
             if let window = NSApp.windows.first(where: { $0.attachedSheet != nil }), let sheet = window.attachedSheet {
                 let code: NSApplication.ModalResponse = argument == "2" ? .alertSecondButtonReturn : .alertFirstButtonReturn
@@ -95,7 +98,8 @@ enum DebugSnapshots {
             let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "none"
             let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }.count
             let list = NSApp.windows.map { "[\(type(of: $0)) '\($0.title)' visible=\($0.isVisible)]" }.joined(separator: " ")
-            let line = "\(front) windows=\(windows) active=\(NSApp.isActive) \(list)\n"
+            let policy = NSApp.activationPolicy() == .regular ? "regular" : "accessory"
+            let line = "\(front) windows=\(windows) active=\(NSApp.isActive) policy=\(policy) \(list)\n"
             let url = URL(fileURLWithPath: dir).appendingPathComponent("front.log")
             if let handle = try? FileHandle(forWritingTo: url) {
                 handle.seekToEndOfFile()

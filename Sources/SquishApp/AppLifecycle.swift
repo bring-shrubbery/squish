@@ -2,18 +2,24 @@ import AppKit
 import Combine
 import ServiceManagement
 
-/// Keeps Squish alive after ⌘Q so the notch keeps watching, and owns what that needs: the
-/// menu bar item, the one-time explanation, and the login item.
+/// Keeps Squish alive after its window closes so the notch keeps watching, and owns what
+/// that needs: the menu bar item, the Dock icon, the one-time explanation, and the login item.
 ///
-/// Only the app menu's Quit item is replaced. Every other way of quitting (the menu bar
-/// item, the Dock, logging out, a Sparkle update) terminates the app as usual.
+/// With the window open Squish is an ordinary app with a Dock icon. Closing the window (⌘W,
+/// the close button or ⌘Q) leaves it in the menu bar only: the Dock icon goes away and the
+/// app you came from comes back. Open Squish from the menu bar item brings the window and
+/// the Dock icon back. Only the app menu's Quit item is replaced; every other way of
+/// quitting (the menu bar item, logging out, a Sparkle update) terminates the app as usual.
 @MainActor
 final class AppLifecycle: ObservableObject {
     static let mainWindowID = "main"
 
-    /// With this on, ⌘Q closes the window and leaves Squish in the menu bar.
+    /// With this on, closing the window leaves Squish in the menu bar, without a Dock icon.
     @Published var keepsRunning: Bool {
-        didSet { defaults.set(keepsRunning, forKey: Keys.keepsRunning) }
+        didSet {
+            defaults.set(keepsRunning, forKey: Keys.keepsRunning)
+            if !keepsRunning { showInDock(true) }
+        }
     }
     @Published private(set) var loginItem: LoginItemState
 
@@ -37,7 +43,7 @@ final class AppLifecycle: ObservableObject {
 
     private let defaults: UserDefaults
     private var previousApp: NSRunningApplication?
-    private var activationObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var isExplaining = false
 
     init(defaults: UserDefaults = .standard) {
@@ -45,8 +51,8 @@ final class AppLifecycle: ObservableObject {
         keepsRunning = defaults.object(forKey: Keys.keepsRunning) as? Bool ?? true
         loginItem = Self.currentLoginItemState()
 
-        // Remember where the user came from, so ⌘Q can hand the screen back.
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        // Remember where the user came from, so closing the window can hand the screen back.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
@@ -55,6 +61,46 @@ final class AppLifecycle: ObservableObject {
                   app.processIdentifier != ProcessInfo.processInfo.processIdentifier
             else { return }
             MainActor.assumeIsolated { self?.previousApp = app }
+        })
+
+        // The Dock icon follows the window: there while one is open, gone once the last closes.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow, Self.isMainWindow(window) else { return }
+            MainActor.assumeIsolated { self?.windowWillClose(window) }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow, Self.isMainWindow(window) else { return }
+            MainActor.assumeIsolated { self?.showInDock(true) }
+        })
+    }
+
+    // MARK: - Dock icon
+
+    private func windowWillClose(_ closing: NSWindow) {
+        guard keepsRunning else { return }
+        let remaining = mainWindows.filter { $0 !== closing }
+        guard remaining.isEmpty else { return }
+        showInDock(false)
+        handBack()
+    }
+
+    /// Regular (Dock icon, app menu) or accessory (menu bar item only).
+    private func showInDock(_ shown: Bool) {
+        let policy: NSApplication.ActivationPolicy = shown ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+    }
+
+    /// Brings back the app the user was in before, so closing Squish feels like leaving it.
+    private func handBack() {
+        guard let previousApp, !previousApp.isTerminated else { return }
+        if !previousApp.activate(from: .current, options: []) {
+            NSApp.yieldActivation(to: previousApp)
+            previousApp.activate()
         }
     }
 
@@ -79,21 +125,17 @@ final class AppLifecycle: ObservableObject {
         NSApp.terminate(nil)
     }
 
-    /// Closes the windows and brings back the app the user was in before.
+    /// Closes the windows; the close observer then drops the Dock icon and hands back.
     func retire() {
         for window in mainWindows {
             window.close()
         }
-        guard let previousApp, !previousApp.isTerminated else { return }
-        if !previousApp.activate(from: .current, options: []) {
-            NSApp.yieldActivation(to: previousApp)
-            previousApp.activate()
-        }
     }
 
-    /// The menu bar item's Open Squish: brings the window back, recreating it when ⌘Q
-    /// closed it.
+    /// The menu bar item's Open Squish: brings the window and the Dock icon back, recreating
+    /// the window when it was closed.
     func open() {
+        showInDock(true)
         if mainWindows.isEmpty {
             openMainWindow?()
         }
@@ -103,19 +145,20 @@ final class AppLifecycle: ObservableObject {
 
     /// The document-style windows: not the notch panels, not popovers or sheets.
     private var mainWindows: [NSWindow] {
-        NSApp.windows.filter { window in
-            window.isVisible && !(window is NSPanel) && window.styleMask.contains(.titled)
-                && window.styleMask.contains(.closable)
-        }
+        NSApp.windows.filter { $0.isVisible && Self.isMainWindow($0) }
+    }
+
+    private static func isMainWindow(_ window: NSWindow) -> Bool {
+        !(window is NSPanel) && window.styleMask.contains(.titled) && window.styleMask.contains(.closable)
     }
 
     private func explain(on window: NSWindow) {
         isExplaining = true
         let alert = NSAlert()
         alert.messageText = "Squish keeps running in the menu bar"
-        alert.informativeText = "The window closes, but Squish keeps watching your sessions, so compact "
-            + "alerts and live chats still work. To quit, choose Quit Squish from the menu bar icon. "
-            + "You can change this in Settings."
+        alert.informativeText = "The window and the Dock icon go away, but Squish keeps watching your "
+            + "sessions, so compact alerts and live chats still work. Open it again or quit it from "
+            + "its icon in the menu bar. You can change this in Settings."
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Quit Squish")
         alert.beginSheetModal(for: window) { [weak self] response in

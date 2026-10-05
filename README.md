@@ -28,7 +28,7 @@ Squish checks for updates automatically through [Sparkle](https://sparkle-projec
 2. **Read the costs.** Sessions appear newest first while older history indexes in the background. Each one shows its tokens, its estimated cost and how full its context is.
 3. **Set the alert threshold.** Under **Compact alerts**, choose when the notch alert fires, or preview it.
 4. **Turn on Live chats** if you want to answer Claude Code and Codex from the notch. Squish installs its hook (below); a preview button shows what a request looks like.
-5. **Leave it running.** `⌘Q` closes the window and keeps Squish in the menu bar, where it goes on watching your sessions, so compact alerts and live chats work without the window. The menu bar icon shows how many sessions are active, reopens the window, and has the real **Quit Squish**. **Squish → Settings…** (`⌘,`) turns this off, so `⌘Q` quits, and can open Squish at login.
+5. **Leave it running.** Closing the window (`⌘W` or `⌘Q`) keeps Squish in the menu bar, without a Dock icon, where it goes on watching your sessions, so compact alerts and live chats work without the window. The menu bar icon shows how many sessions are active, reopens the window, and has the real **Quit Squish**. **Squish → Settings…** (`⌘,`) turns this off, so `⌘Q` quits, and can open Squish at login.
 
 ## Live chats and the Claude Code hook
 

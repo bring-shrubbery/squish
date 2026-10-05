@@ -17,9 +17,9 @@ struct GeneralSettingsView: View {
                 }
             } footer: {
                 FormFooter(
-                    "⌘Q closes the window and leaves Squish in the menu bar, where it keeps watching "
-                        + "your sessions for compact alerts and live chats. Quit it from the menu bar "
-                        + "icon. With this off, ⌘Q quits."
+                    "Closing the window, with ⌘W or ⌘Q, leaves Squish in the menu bar without a Dock "
+                        + "icon, still watching your sessions for compact alerts and live chats. Open or "
+                        + "quit it from the menu bar icon. With this off, ⌘Q quits and the Dock icon stays."
                 )
             }
         }
