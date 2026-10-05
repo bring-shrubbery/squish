@@ -8,8 +8,10 @@ struct CostDashboardView: View {
     var body: some View {
         let snapshot = CostDashboardSnapshot(entries: appState.costEntries)
         let liveSessionIDs = Set(appState.sessions.map(\.id))
-        Form {
-            Section {
+        // A scroll view with lazy session rows: a grouped Form lays out every row on every
+        // update, which stalls the window once the ledger has hundreds of sessions.
+        SettingsPage {
+            SettingsGroup {
                 HStack(alignment: .top, spacing: 0) {
                     Stat(
                         label: "Total",
@@ -35,10 +37,10 @@ struct CostDashboardView: View {
                         detail: "\(compactTokenCount(snapshot.outputTokens)) tokens"
                     )
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, 10)
             }
 
-            Section("Spend by Day") {
+            SettingsGroup {
                 if snapshot.dailyCosts.isEmpty {
                     Text("Usage appears after a session is detected.")
                         .foregroundStyle(.secondary)
@@ -63,29 +65,42 @@ struct CostDashboardView: View {
                         }
                     }
                     .frame(height: 160)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 10)
                 }
+            } header: {
+                Text("Spend by Day")
             }
 
-            Section("Composition") {
+            SettingsGroup {
                 CompositionRow(label: "Input", amount: snapshot.total.input, total: snapshot.total.total)
+                SettingsDivider()
                 CompositionRow(label: "Cache reads", amount: snapshot.total.cacheRead, total: snapshot.total.total)
+                SettingsDivider()
                 CompositionRow(label: "Cache writes", amount: snapshot.total.cacheWrite, total: snapshot.total.total)
+                SettingsDivider()
                 CompositionRow(label: "Output", amount: snapshot.total.output, total: snapshot.total.total)
+            } header: {
+                Text("Composition")
             }
 
-            Section {
+            SettingsGroup {
                 if appState.costEntries.isEmpty {
                     Text("No sessions yet. Start a coding agent in this folder or one of its subfolders.")
                         .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
                 } else {
-                    ForEach(appState.costEntries) { entry in
-                        SessionCostRow(
-                            session: entry.session,
-                            cost: entry.cost,
-                            isArchived: !liveSessionIDs.contains(entry.id)
-                        )
-                        .equatable()
+                    LazyVStack(spacing: 0) {
+                        ForEach(appState.costEntries) { entry in
+                            SessionCostRow(
+                                session: entry.session,
+                                cost: entry.cost,
+                                isArchived: !liveSessionIDs.contains(entry.id)
+                            )
+                            .equatable()
+                            if entry.id != appState.costEntries.last?.id {
+                                SettingsDivider()
+                            }
+                        }
                     }
                 }
             } header: {
@@ -94,6 +109,7 @@ struct CostDashboardView: View {
                     Spacer()
                     if snapshot.unpricedSessionCount > 0 {
                         Text("\(snapshot.unpricedSessionCount) without pricing")
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -101,7 +117,6 @@ struct CostDashboardView: View {
                 FormFooter("Prices are API equivalents in USD, updated 10 Jul 2026. Subscription plans may differ.")
             }
         }
-        .formStyle(.grouped)
         .navigationSubtitle(subtitle)
     }
 
@@ -141,7 +156,7 @@ private struct CompositionRow: View {
 
     var body: some View {
         let fraction = total > 0 ? amount / total : 0
-        LabeledContent(label) {
+        SettingsRow(label) {
             HStack(spacing: 12) {
                 ProgressView(value: fraction)
                     .frame(width: 140)
@@ -195,7 +210,7 @@ private struct SessionCostRow: View, Equatable {
                     .foregroundStyle(session.contextFraction >= 0.8 ? .orange : .secondary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 8)
     }
 }
 

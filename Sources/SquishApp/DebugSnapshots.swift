@@ -12,6 +12,8 @@ import SwiftUI
 ///   select <n>       selects the first n rows of the Worktrees table
 ///   filters          toggles the Worktrees filter popover
 ///   remove           opens the removal confirmation for the selection
+///   scroll <dy> [n]  posts n scroll-wheel events of dy points to the window (default 1)
+///   hover <x> <y>    posts a mouse-moved event at window coordinates
 ///   snap <name>      writes <name>-<n>.png for every visible window (main window, popovers, sheets)
 ///   quit
 @MainActor
@@ -54,6 +56,13 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: filtersNotification, object: nil)
         case "remove":
             NotificationCenter.default.post(name: removeNotification, object: nil)
+        case "scroll":
+            let parts = argument.split(separator: " ").compactMap { Int($0) }
+            let dy = parts.first ?? -10
+            for _ in 0..<(parts.count > 1 ? parts[1] : 1) { post(scrollBy: dy) }
+        case "hover":
+            let parts = argument.split(separator: " ").compactMap { Double($0) }
+            if parts.count == 2 { post(mouseMovedTo: CGPoint(x: parts[0], y: parts[1])) }
         case "snap":
             snap(named: argument, into: dir)
         case "quit":
@@ -61,6 +70,27 @@ enum DebugSnapshots {
         default:
             break
         }
+    }
+
+    private static func post(scrollBy dy: Int) {
+        guard let window = NSApp.windows.first(where: \.isVisible),
+              let cgEvent = CGEvent(
+                  scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                  wheel1: Int32(dy), wheel2: 0, wheel3: 0
+              )
+        else { return }
+        let center = CGPoint(x: window.frame.midX + 200, y: window.frame.midY)
+        cgEvent.location = CGPoint(x: center.x, y: NSScreen.screens[0].frame.height - center.y)
+        if let event = NSEvent(cgEvent: cgEvent) { window.sendEvent(event) }
+    }
+
+    private static func post(mouseMovedTo point: CGPoint) {
+        guard let window = NSApp.windows.first(where: \.isVisible) else { return }
+        let event = NSEvent.mouseEvent(
+            with: .mouseMoved, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+        )
+        if let event { window.sendEvent(event) }
     }
 
     private static func snap(named name: String, into dir: String) {

@@ -127,7 +127,7 @@ private struct FolderFooter: View {
     private var status: String {
         if appState.isScanning { return "Scanning…" }
         let count = appState.sessions.count
-        return count == 1 ? "1 active session" : "\(count) active sessions"
+        return count == 1 ? "1 session" : "\(count) sessions"
     }
 }
 
@@ -202,5 +202,93 @@ struct FormFooter: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A settings-style page: grouped sections in a scroll view. Unlike a grouped `Form`, rows
+/// inside a `LazyVStack` here are laid out only when visible, so long lists stay cheap.
+struct SettingsPage<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                content()
+            }
+            .frame(maxWidth: 1000)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+        }
+    }
+}
+
+/// One rounded group of rows with an optional header above and footer below, drawn like a
+/// grouped form's section.
+struct SettingsGroup<Content: View, Header: View, Footer: View>: View {
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let footer: () -> Footer
+
+    init(
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder header: @escaping () -> Header = { EmptyView() },
+        @ViewBuilder footer: @escaping () -> Footer = { EmptyView() }
+    ) {
+        self.content = content
+        self.header = header
+        self.footer = footer
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header()
+                .font(.headline)
+                .padding(.horizontal, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+            footer()
+                .font(.callout)
+                .padding(.horizontal, 4)
+        }
+    }
+}
+
+/// The separator between two rows of a `SettingsGroup`.
+struct SettingsDivider: View {
+    var body: some View {
+        Divider().padding(.vertical, 2)
+    }
+}
+
+/// A row of a `SettingsGroup`: a label on the left, its control on the right.
+struct SettingsRow<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer(minLength: 16)
+            content()
+        }
+        .padding(.vertical, 7)
     }
 }

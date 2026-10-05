@@ -19,10 +19,18 @@ struct CompactAlertsView: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Remind me to compact", isOn: $appState.alertsEnabled)
-                LabeledContent("Alert at") {
+        // A scroll view with lazy rows: a grouped Form lays out every row on every update,
+        // which stalls the window once the session list has hundreds of entries.
+        let sessions = rankedSessions
+        SettingsPage {
+            SettingsGroup {
+                SettingsRow("Remind me to compact") {
+                    Toggle("Remind me to compact", isOn: $appState.alertsEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow("Alert at") {
                     HStack(spacing: 10) {
                         Slider(value: $appState.alertThreshold, in: 0.5...0.95, step: 0.05)
                             .frame(width: 180)
@@ -31,7 +39,8 @@ struct CompactAlertsView: View {
                             .frame(width: 36, alignment: .trailing)
                     }
                 }
-                LabeledContent("Preview") {
+                SettingsDivider()
+                SettingsRow("Preview") {
                     Button("Show in Notch") { appState.previewAlert() }
                 }
             } footer: {
@@ -42,14 +51,20 @@ struct CompactAlertsView: View {
                 )
             }
 
-            Section {
-                if rankedSessions.isEmpty {
+            SettingsGroup {
+                if sessions.isEmpty {
                     Text("No sessions yet. New Codex, Claude Code and Gemini sessions appear automatically.")
                         .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
                 } else {
-                    ForEach(rankedSessions) { session in
-                        SessionContextRow(session: session, threshold: appState.alertThreshold)
-                            .equatable()
+                    LazyVStack(spacing: 0) {
+                        ForEach(sessions) { session in
+                            SessionContextRow(session: session, threshold: appState.alertThreshold)
+                                .equatable()
+                            if session.id != sessions.last?.id {
+                                SettingsDivider()
+                            }
+                        }
                     }
                 }
             } header: {
@@ -68,19 +83,22 @@ struct CompactAlertsView: View {
             }
 
             if !appState.recentAlerts.isEmpty {
-                Section("Recent Reminders") {
-                    ForEach(appState.recentAlerts.prefix(4)) { alert in
-                        LabeledContent {
+                let recent = Array(appState.recentAlerts.prefix(4))
+                SettingsGroup {
+                    ForEach(recent) { alert in
+                        SettingsRow(alert.title) {
                             Text(alert.date, format: .relative(presentation: .named))
                                 .foregroundStyle(.secondary)
-                        } label: {
-                            Text(alert.title).lineLimit(1)
+                        }
+                        if alert.id != recent.last?.id {
+                            SettingsDivider()
                         }
                     }
+                } header: {
+                    Text("Recent Reminders")
                 }
             }
         }
-        .formStyle(.grouped)
         .navigationSubtitle(subtitle)
     }
 
@@ -149,6 +167,6 @@ private struct SessionContextRow: View, Equatable {
                     .frame(width: 140)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 8)
     }
 }

@@ -5,16 +5,22 @@ struct LiveChatsSettingsView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Show live chats in the notch", isOn: $appState.liveChatsEnabled)
-                LabeledContent("Claude Code hook") {
+        SettingsPage {
+            SettingsGroup {
+                SettingsRow("Show live chats in the notch") {
+                    Toggle("Show live chats in the notch", isOn: $appState.liveChatsEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow("Claude Code hook") {
                     SetupStatus(
                         ok: appState.liveChatsHookInstalled,
                         text: appState.liveChatsHookInstalled ? "Installed" : "Not installed"
                     )
                 }
-                LabeledContent("Accessibility") {
+                SettingsDivider()
+                SettingsRow("Accessibility") {
                     HStack(spacing: 10) {
                         SetupStatus(
                             ok: appState.liveChatsAccessibilityGranted,
@@ -25,7 +31,8 @@ struct LiveChatsSettingsView: View {
                         }
                     }
                 }
-                LabeledContent("Preview") {
+                SettingsDivider()
+                SettingsRow("Preview") {
                     Button("Show a Request") { appState.previewLiveChat() }
                         .disabled(!appState.liveChatsEnabled)
                 }
@@ -39,7 +46,6 @@ struct LiveChatsSettingsView: View {
                 )
             }
         }
-        .formStyle(.grouped)
         .navigationSubtitle(appState.liveChatsEnabled ? "On" : "Off")
     }
 }
