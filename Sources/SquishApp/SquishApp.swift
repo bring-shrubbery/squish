@@ -11,10 +11,10 @@ struct SquishApplication: App {
             RootView()
                 .environmentObject(appState)
                 .environmentObject(worktreeStore)
-                .frame(minWidth: 980, minHeight: 680)
+                .frame(minWidth: 900, minHeight: 600)
         }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1180, height: 780)
+        .defaultSize(width: 1100, height: 720)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {

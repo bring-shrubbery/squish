@@ -17,16 +17,28 @@ public enum WorktreeFilterChoice: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-public enum WorktreeSort: String, CaseIterable, Sendable, Identifiable {
-    /// Largest first; unmeasured last.
-    case largest
-    /// Least recent activity first; unknown activity last.
-    case oldest
-    /// Most recent activity first; unknown activity last.
-    case newest
-    case name
+/// The order of the Worktrees list: a column and a direction. Worktrees whose value for the
+/// column is unknown (unmeasured size, no known activity) come last either way.
+public struct WorktreeSort: Equatable, Sendable {
+    public enum Key: String, CaseIterable, Sendable {
+        case name
+        case repo
+        case size
+        case activity
+    }
 
-    public var id: String { rawValue }
+    public var key: Key
+    public var ascending: Bool
+
+    public init(key: Key, ascending: Bool) {
+        self.key = key
+        self.ascending = ascending
+    }
+
+    public static let largest = WorktreeSort(key: .size, ascending: false)
+    public static let oldest = WorktreeSort(key: .activity, ascending: true)
+    public static let newest = WorktreeSort(key: .activity, ascending: false)
+    public static let name = WorktreeSort(key: .name, ascending: true)
 }
 
 /// What the Worktrees list shows and in which order. Every field at its default shows everything.
@@ -85,17 +97,50 @@ public struct WorktreeFilter: Equatable, Sendable {
         return true
     }
 
+    /// Whether anything besides the search and the sort narrows the list.
+    public var isNarrowed: Bool {
+        var plain = self
+        plain.query = ""
+        plain.sort = WorktreeFilter().sort
+        return plain != WorktreeFilter()
+    }
+
     public static func sorted(_ worktrees: [Worktree], by sort: WorktreeSort) -> [Worktree] {
-        switch sort {
-        case .largest:
-            worktrees.sorted { ($0.sizeBytes ?? -1) > ($1.sizeBytes ?? -1) }
-        case .oldest:
-            worktrees.sorted { ($0.lastActivity ?? .distantFuture) < ($1.lastActivity ?? .distantFuture) }
-        case .newest:
-            worktrees.sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
-        case .name:
-            worktrees.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        let known = worktrees.filter { isKnown($0, for: sort.key) }
+        let unknown = worktrees.filter { !isKnown($0, for: sort.key) }
+        let ordered = known.sorted { lhs, rhs in
+            let result = compare(lhs, rhs, by: sort.key)
+            return sort.ascending ? result == .orderedAscending : result == .orderedDescending
         }
+        return ordered + unknown
+    }
+
+    private static func isKnown(_ worktree: Worktree, for key: WorktreeSort.Key) -> Bool {
+        switch key {
+        case .size: worktree.sizeBytes != nil
+        case .activity: worktree.lastActivity != nil
+        case .name, .repo: true
+        }
+    }
+
+    /// Never `.orderedSame` for two different worktrees, so the order is stable across scans.
+    private static func compare(_ lhs: Worktree, _ rhs: Worktree, by key: WorktreeSort.Key) -> ComparisonResult {
+        let primary: ComparisonResult
+        switch key {
+        case .name:
+            primary = lhs.displayName.localizedStandardCompare(rhs.displayName)
+        case .repo:
+            primary = lhs.repoName.localizedStandardCompare(rhs.repoName)
+        case .size:
+            let l = lhs.sizeBytes ?? 0, r = rhs.sizeBytes ?? 0
+            primary = l == r ? .orderedSame : (l < r ? .orderedAscending : .orderedDescending)
+        case .activity:
+            let l = lhs.lastActivity ?? .distantPast, r = rhs.lastActivity ?? .distantPast
+            primary = l == r ? .orderedSame : (l < r ? .orderedAscending : .orderedDescending)
+        }
+        if primary != .orderedSame { return primary }
+        let byName = lhs.displayName.localizedStandardCompare(rhs.displayName)
+        return byName != .orderedSame ? byName : lhs.path.compare(rhs.path)
     }
 }
 

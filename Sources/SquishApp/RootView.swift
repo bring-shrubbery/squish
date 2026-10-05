@@ -1,8 +1,10 @@
 import AppKit
+import SquishCore
 import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var worktreeStore: WorktreeStore
 
     var body: some View {
         Group {
@@ -12,8 +14,11 @@ struct RootView: View {
                 DashboardShell()
             }
         }
-        .background(AppColors.canvas)
-        .preferredColorScheme(.dark)
+        .onAppear {
+            #if DEBUG
+            DebugSnapshots.start(appState, worktrees: worktreeStore)
+            #endif
+        }
     }
 }
 
@@ -22,12 +27,10 @@ struct DashboardShell: View {
     @EnvironmentObject private var worktreeStore: WorktreeStore
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             Sidebar()
-                .frame(width: 224)
-
-            Divider().overlay(.white.opacity(0.05))
-
+                .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 280)
+        } detail: {
             Group {
                 switch appState.selectedSection {
                 case .costs:
@@ -40,7 +43,7 @@ struct DashboardShell: View {
                     WorktreesView()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle(appState.selectedSection.title)
         }
         .onAppear {
             worktreeStore.update(root: appState.projectRoot, sessions: appState.sessions)
@@ -59,126 +62,77 @@ private struct Sidebar: View {
     @EnvironmentObject private var worktreeStore: WorktreeStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                AppMark(size: 30)
-                Text("Squish")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 22)
-            .padding(.bottom, 28)
-
-            Text("WORKSPACE")
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1.25)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 9)
-
+        List(selection: selection) {
             ForEach(AppSection.allCases) { section in
-                Button {
-                    appState.selectedSection = section
-                } label: {
-                    HStack(spacing: 11) {
-                        Image(systemName: section.symbol)
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 18)
-                        Text(section.title)
-                            .font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        if section == .worktrees, worktreeStore.flaggedCount > 0 {
-                            Text("\(worktreeStore.flaggedCount)")
-                                .font(.system(size: 10, weight: .bold).monospacedDigit())
-                                .padding(.horizontal, 6)
-                                .frame(height: 17)
-                                .background(AppColors.amber.opacity(0.28), in: Capsule())
-                                .foregroundStyle(AppColors.amber)
-                        } else if (section == .compactAlerts && appState.alertsEnabled)
-                            || (section == .liveChats && appState.liveChatsEnabled) {
-                            Circle()
-                                .fill(AppColors.mint)
-                                .frame(width: 6, height: 6)
-                        }
-                    }
-                    .foregroundStyle(appState.selectedSection == section ? .white : .secondary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 42)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(appState.selectedSection == section ? AppColors.violet.opacity(0.2) : .clear)
-                            .overlay {
-                                if appState.selectedSection == section {
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(AppColors.cyan.opacity(0.16), lineWidth: 1)
-                                }
-                            }
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
+                Label(section.title, systemImage: section.symbol)
+                    .badge(section == .worktrees ? worktreeStore.flaggedCount : 0)
+                    .tag(section)
             }
-
-            Spacer()
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(appState.isScanning ? AppColors.amber : AppColors.mint)
-                        .frame(width: 7, height: 7)
-                    Text(appState.isScanning ? "Finding sessions…" : "Watching live")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("\(appState.sessions.count) sessions detected")
-                    .font(.system(size: 12, weight: .semibold))
-
-                Button("Change folder…") {
-                    appState.chooseFolder()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AppColors.mint)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.black.opacity(0.14))
         }
-        .background(AppColors.sidebar)
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            FolderFooter()
+        }
+    }
+
+    private var selection: Binding<AppSection?> {
+        Binding(
+            get: { appState.selectedSection },
+            set: { if let section = $0 { appState.selectedSection = section } }
+        )
     }
 }
 
-struct PageHeader: View {
-    let eyebrow: String
-    let title: String
-    let subtitle: String
+/// The watched folder, pinned under the sidebar like a navigator's filter bar.
+private struct FolderFooter: View {
+    @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(eyebrow.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.25)
-                    .foregroundStyle(AppColors.mint)
-                Text(title)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 13))
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
                     .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(appState.projectRoot?.lastPathComponent ?? "")
+                        .font(.callout)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .help(appState.projectRoot?.path ?? "")
+                Spacer(minLength: 4)
+                Menu {
+                    Button("Choose Folder…") { appState.chooseFolder() }
+                    Button("Show in Finder") {
+                        if let root = appState.projectRoot {
+                            NSWorkspace.shared.activateFileViewerSelecting([root])
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.secondary)
             }
-            Spacer()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
+    }
+
+    private var status: String {
+        if appState.isScanning { return "Scanning…" }
+        let count = appState.sessions.count
+        return count == 1 ? "1 active session" : "\(count) active sessions"
     }
 }
 
+/// The notch overlays draw on black, outside the window; they keep their own palette.
 enum AppColors {
-    static let canvas = Color(red: 0.035, green: 0.043, blue: 0.10)
-    static let sidebar = Color(red: 0.045, green: 0.052, blue: 0.125)
-    static let card = Color(red: 0.12, green: 0.13, blue: 0.25).opacity(0.42)
-    static let stroke = Color(red: 0.64, green: 0.48, blue: 0.82).opacity(0.22)
-
     static let cyan = Color(red: 0.12, green: 0.72, blue: 0.78)
     static let blue = Color(red: 0.31, green: 0.30, blue: 0.75)
     static let violet = Color(red: 0.63, green: 0.41, blue: 0.70)
@@ -186,7 +140,7 @@ enum AppColors {
     static let pink = Color(red: 0.87, green: 0.60, blue: 0.69)
     static let peach = Color(red: 0.91, green: 0.59, blue: 0.56)
 
-    // Semantic aliases used by status views.
+    // Semantic aliases used by the notch views.
     static let mint = cyan
     static let amber = peach
     static let coral = magenta
@@ -224,20 +178,29 @@ struct AppMark: View {
     }
 }
 
-struct CardModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(AppColors.card)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppColors.stroke, lineWidth: 1)
-                    )
-            )
+/// A provider's initial in a quiet rounded square, for session rows.
+struct ProviderIcon: View {
+    let provider: AgentProvider
+
+    var body: some View {
+        Text(String(provider.displayName.prefix(1)))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 26, height: 26)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 
-extension View {
-    func appCard() -> some View { modifier(CardModifier()) }
+/// A grouped form's explanatory text, leading-aligned under its section.
+struct FormFooter: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }

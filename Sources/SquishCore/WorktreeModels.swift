@@ -61,6 +61,9 @@ public struct Worktree: Identifiable, Equatable, Sendable {
     public var agent: WorktreeAgent? { WorktreeAgent.detect(path: path) }
 
     public var displayName: String { branch ?? "detached \(head.prefix(7))" }
+
+    /// The last path component of the repository, as the list labels it.
+    public var repoName: String { (repoPath as NSString).lastPathComponent }
 }
 
 public struct WorktreeThresholds: Equatable, Sendable {

@@ -126,5 +126,23 @@ final class WorktreeFilterTests: XCTestCase {
         XCTAssertEqual(WorktreeFilter.sorted(all, by: .oldest).map(\.path), ["/small", "/big", "/unknown"])
         XCTAssertEqual(WorktreeFilter.sorted(all, by: .newest).map(\.path), ["/big", "/small", "/unknown"])
         XCTAssertEqual(WorktreeFilter.sorted(all, by: .name).map(\.path), ["/small", "/big", "/unknown"])
+        // Unknown values stay last when the direction flips.
+        XCTAssertEqual(
+            WorktreeFilter.sorted(all, by: WorktreeSort(key: .size, ascending: true)).map(\.path),
+            ["/small", "/big", "/unknown"]
+        )
+        XCTAssertEqual(
+            WorktreeFilter.sorted(all, by: WorktreeSort(key: .name, ascending: false)).map(\.path),
+            ["/unknown", "/big", "/small"]
+        )
+    }
+
+    func testIsNarrowedIgnoresSearchAndSort() {
+        var filter = WorktreeFilter()
+        filter.query = "x"
+        filter.sort = .name
+        XCTAssertFalse(filter.isNarrowed)
+        filter.locked = .exclude
+        XCTAssertTrue(filter.isNarrowed)
     }
 }

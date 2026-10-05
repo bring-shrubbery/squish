@@ -14,17 +14,17 @@ enum AppSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .costs: "Costs"
-        case .compactAlerts: "Compact alerts"
-        case .liveChats: "Live chats"
+        case .compactAlerts: "Compact Alerts"
+        case .liveChats: "Live Chats"
         case .worktrees: "Worktrees"
         }
     }
 
     var symbol: String {
         switch self {
-        case .costs: "chart.bar.xaxis"
+        case .costs: "chart.bar"
         case .compactAlerts: "rectangle.topthird.inset.filled"
-        case .liveChats: "bubble.left.and.bubble.right.fill"
+        case .liveChats: "bubble.left.and.bubble.right"
         case .worktrees: "arrow.triangle.branch"
         }
     }
@@ -255,6 +255,11 @@ final class AppState: ObservableObject {
             setProjectRoot(URL(fileURLWithPath: path), persist: false)
         }
     }
+
+    #if DEBUG
+    /// For `DebugSnapshots`: watch a folder without saving the choice.
+    func debugSetProjectRoot(_ url: URL) { setProjectRoot(url, persist: false) }
+    #endif
 
     private func setProjectRoot(_ url: URL, persist: Bool) {
         stopMonitoring()

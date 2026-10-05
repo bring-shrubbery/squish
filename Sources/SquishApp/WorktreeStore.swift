@@ -14,8 +14,9 @@ final class WorktreeStore: ObservableObject {
     }
     /// What the list shows; kept here so it survives leaving and reopening the section.
     @Published var filter = WorktreeFilter()
-    /// Paths of the worktrees chosen for a bulk removal.
-    @Published private(set) var selection: Set<String> = []
+    /// Paths of the selected rows; the table binds to it. Any row can be selected, and the
+    /// removal plan says what happens to each.
+    @Published var selection: Set<String> = []
     @Published private(set) var sizes: [String: Int64] = [:]
     @Published private(set) var unmeasurable: Set<String> = []
     @Published private(set) var isRefreshing = false
@@ -138,53 +139,26 @@ final class WorktreeStore: ObservableObject {
         return WorktreeFilter.sorted(matching, by: filter.sort)
     }
 
-    func visibleWorktrees(in repoPath: String) -> [Worktree] {
-        visibleWorktrees.filter { $0.repoPath == repoPath }
+    func worktree(at path: String) -> Worktree? {
+        worktrees.first { $0.path == path }
     }
 
     // MARK: - Selection
-
-    /// Whether a row offers a checkbox: anything a bulk removal could act on.
-    func isSelectable(_ worktree: Worktree) -> Bool {
-        if case .blocked = removal(for: worktree) { return false }
-        return true
-    }
-
-    func isSelected(_ worktree: Worktree) -> Bool { selection.contains(worktree.path) }
 
     var selectedWorktrees: [Worktree] { worktrees.filter { selection.contains($0.path) } }
 
     var selectedBytes: Int64 { selectedWorktrees.compactMap(\.sizeBytes).reduce(0, +) }
 
-    func setSelected(_ worktree: Worktree, _ selected: Bool) {
-        if selected {
-            guard isSelectable(worktree) else { return }
-            selection.insert(worktree.path)
-        } else {
-            selection.remove(worktree.path)
-        }
-    }
-
-    /// Adds the selectable ones among the given worktrees.
-    func select(_ worktrees: [Worktree]) {
-        selection.formUnion(worktrees.filter(isSelectable).map(\.path))
-    }
-
-    func deselect(_ worktrees: [Worktree]) {
-        selection.subtract(worktrees.map(\.path))
-    }
-
-    func clearSelection() { selection = [] }
-
-    /// Replaces the selection with the flagged worktrees that are shown.
+    /// Replaces the selection with the flagged worktrees the list shows.
     func selectFlagged() {
-        selection = []
-        select(visibleWorktrees.filter { !flags(for: $0).isEmpty })
+        selection = Set(visibleWorktrees.filter { !flags(for: $0).isEmpty }.map(\.path))
     }
 
-    /// What removing the selection would do, from the last scan.
-    func bulkPlan() -> WorktreeBulkPlan {
-        WorktreePolicy.bulkPlan(selectedWorktrees, activeSessionPaths: activeSessionPaths)
+    /// What removing the given worktrees would do, from the last scan.
+    func bulkPlan(for paths: Set<String>) -> WorktreeBulkPlan {
+        let chosen = visibleWorktrees.filter { paths.contains($0.path) }
+            + worktrees.filter { paths.contains($0.path) && !visibleWorktrees.contains($0) }
+        return WorktreePolicy.bulkPlan(chosen, activeSessionPaths: activeSessionPaths)
     }
 
     func refresh() {
@@ -237,23 +211,8 @@ final class WorktreeStore: ObservableObject {
     }
 
     /// Removes one worktree; returns the bytes it freed, or nil when git refused or the
-    /// worktree is no longer safe to remove this way. Does nothing while another removal runs.
-    /// A forced removal passes the counts the user confirmed losing; it is refused if git now
-    /// reports more.
-    @discardableResult
-    func remove(
-        _ worktree: Worktree,
-        force: Bool,
-        confirmedUncommitted: Int = 0,
-        confirmedUnpushed: Int = 0
-    ) async -> Int64? {
-        guard !isRemoving else { return nil }
-        return await remove(
-            worktree, force: force, confirmedUncommitted: confirmedUncommitted,
-            confirmedUnpushed: confirmedUnpushed, showsReclaimed: true
-        )
-    }
-
+    /// worktree is no longer safe to remove this way. A forced removal passes the counts the
+    /// user confirmed losing; it is refused if git now reports more.
     private func remove(
         _ worktree: Worktree,
         force: Bool,
@@ -313,11 +272,6 @@ final class WorktreeStore: ObservableObject {
         }
         await rescan(repo: worktree.repoPath)
         return freed
-    }
-
-    func prune(_ worktree: Worktree) async {
-        guard !isRemoving else { return }
-        await pruneNow(worktree)
     }
 
     /// Returns whether git's record of the missing worktree was removed.

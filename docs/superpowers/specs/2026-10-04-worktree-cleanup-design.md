@@ -65,37 +65,37 @@ the badge stays current. git work and sizing run off the main actor.
 
 ## UI
 
-A new sidebar section **Worktrees** (`AppSection.worktrees`) with a badge showing the
-flagged count when it is above zero.
+A sidebar section **Worktrees** (`AppSection.worktrees`) with a badge showing the flagged
+count when it is above zero. The window title's subtitle gives the count and total size of
+the linked worktrees.
 
-**Header:** total disk used by linked worktrees, the flagged total, how many of the
-worktrees the filter shows, the two thresholds as editable controls (age in days, size in GB)
-and Refresh.
+**Toolbar:** a search field over branch and path, Refresh, and a Filter button that opens a
+popover. The popover (`WorktreeFilter`, kept in the store so it survives leaving the section)
+has, under *Show*, a three-way choice (any, only, hidden) for each of *Flagged*, *In use*,
+*Unsaved work* (uncommitted or unpushed), *Agent-made*, *Locked* and *Missing*, a minimum
+size (100 MB … 10 GB; unmeasured worktrees drop out) and a minimum idle time (1 day … 3
+months; worktrees with no known activity drop out). Under *Flag when* are the two thresholds
+(idle for N days, larger than N GB). *Reset* puts everything back. Whenever the popover
+narrows the list, the Filter icon fills and a strip above the table says "Showing N of M"
+with *Clear Filters*.
 
-**Filter bar** (`WorktreeFilter`, kept in the store so it survives leaving the section): a
-search over branch and path; a sort (largest, oldest, newest, name); and for each of
-*Flagged*, *In use*, *Unsaved work* (uncommitted or unpushed), *Agent-made*, *Locked* and
-*Missing* a three-way choice: any, only, hide. A minimum size (100 MB … 10 GB; unmeasured
-worktrees drop out) and a minimum idle time (1 day … 3 months; worktrees with no known
-activity drop out). "Reset filters" appears whenever anything is set. Every control is at
-its default shows everything.
+**Table:** one native table of every worktree, sortable by its columns *Branch* (with the
+path and an agent tag beneath), *Repository*, *Status*, *Size* and *Last Active*; unmeasured
+sizes and unknown activity sort last in both directions. *Status* reads like
+"In use · 3 uncommitted changes · Idle 23 days": in-use with a green dot, thresholds in
+orange, read and removal errors in red. Selection is the table's own (click, ⇧, ⌘, ⌘A);
+any row can be selected, and the plan decides what happens to each. Double-click reveals in
+Finder; the context menu offers Reveal in Finder, Open in Terminal and Remove; Delete removes
+the selection. The selection drops paths that disappear from a scan.
 
-**Selection:** each row has a checkbox, each repo card a checkbox for its shown rows, and a
-selection bar above the list one for everything shown (mixed state when only some are
-selected). Rows whose removal is blocked (in use, locked, unreadable) cannot be selected and
-say why on hover. The bar shows the count and size selected, notes how many selected rows the
-filter currently hides, offers *Select ▸ All shown / Flagged shown / None*, and *Remove N
-selected*. The selection drops paths that disappear from a scan.
+**Status bar:** "3 flagged · 4.1 GB" or "2 of 12 selected · 3.2 GB", a *Select Flagged*
+shortcut, and *Remove…*. For a few seconds after a removal it says how much was freed.
 
-**List:** grouped by repo, rows in the chosen order (largest first by default). A row shows
-the branch and path, the agent label, last activity ("3 weeks ago"), size ("Measuring…" until
-known), and chips for *Uncommitted changes*, *Unpushed commits*, *In use*, *Locked*, *Missing*.
-Rows past a threshold are highlighted and say which threshold; selected rows are tinted. A
-repo card says how many of its worktrees the filter hides. Actions: Reveal in Finder, Open in
-Terminal, Remove.
+Empty states use `ContentUnavailableView`: no git, no worktrees, no search results, nothing
+matching the filters (with *Clear Filters*).
 
-The section follows the existing dark dashboard style (`AppColors`, the cards and rows of
-`CostDashboardView`).
+The window follows the system appearance and accent colour. Settings-like sections use a
+grouped `Form`; only the notch overlays keep their own palette (`AppColors`).
 
 ## Removal
 
@@ -115,7 +115,7 @@ The section follows the existing dark dashboard style (`AppColors`, the cards an
   with the reason.
 - `.pruneOnly` — the directory is missing; runs `git worktree prune`.
 
-**Remove selected** acts on the selection through a `WorktreeBulkPlan`
+**Remove…** acts on the selection through a `WorktreeBulkPlan`
 (`WorktreePolicy.bulkPlan`), which sorts each chosen worktree into *clean* (`.confirm`),
 *losing work* (`.confirmLosingWork`), *prune* (`.pruneOnly`) or *skipped* (`.blocked`). The
 first confirmation names each group and the total space. When nothing chosen has work in it,
