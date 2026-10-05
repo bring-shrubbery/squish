@@ -114,7 +114,7 @@ struct CostDashboardView: View {
                     }
                 }
             } footer: {
-                FormFooter("Prices are API equivalents in USD, updated 10 Jul 2026. Subscription plans may differ.")
+                FormFooter("Prices are API equivalents in USD, updated 5 Oct 2026. Subscription plans may differ.")
             }
         }
         .navigationSubtitle(subtitle)

@@ -193,6 +193,45 @@ final class CostLedgerStoreTests: XCTestCase {
         XCTAssertEqual(migrated.dailyCosts, staleEntry.dailyCosts)
     }
 
+    func testNewerCatalogRepricesStoredSessionsEvenDownward() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        func catalog(date: String, cachedRead: Double) -> PricingCatalog {
+            PricingCatalog(
+                effectiveDate: ISO8601DateFormatter().date(from: date)!,
+                prices: [
+                    ModelPrice(
+                        provider: .codex, canonicalModel: "gpt-5.4", inputPerMillion: 2,
+                        cachedReadPerMillion: cachedRead, outputPerMillion: 10, contextWindow: 400_000
+                    )
+                ]
+            )
+        }
+        let session = makeSession(projectPath: root.appendingPathComponent("project").path)
+        let ledger = CostLedgerStore(directory: root.appendingPathComponent("ledger"))
+
+        let first = await ledger.merge(sessions: [session], projectRoot: root, catalog: catalog(date: "2026-07-10T00:00:00Z", cachedRead: 1))
+        let before = try XCTUnwrap(first.first?.cost)
+        XCTAssertEqual(before.cacheRead, 0.0005, accuracy: 0.000_000_1)
+
+        let cheaper = catalog(date: "2026-10-05T00:00:00Z", cachedRead: 0.25)
+        let second = await ledger.merge(sessions: [session], projectRoot: root, catalog: cheaper)
+        let entry = try XCTUnwrap(second.first)
+        let after = try XCTUnwrap(entry.cost)
+        XCTAssertEqual(after.cacheRead, 0.000_125, accuracy: 0.000_000_1)
+        XCTAssertEqual(after.input, before.input, accuracy: 0.000_000_1)
+        XCTAssertEqual(entry.pricingEffectiveDate, cheaper.effectiveDate)
+        let bucketed = entry.dailyCosts.reduce(CostBreakdown.zero) { $0 + $1.cost }
+        XCTAssertEqual(bucketed.total, after.total, accuracy: 0.000_000_1)
+
+        // The same catalog again changes nothing.
+        let third = await ledger.merge(sessions: [session], projectRoot: root, catalog: cheaper)
+        XCTAssertEqual(third.first?.cost, after)
+    }
+
     private func makeSession(
         projectPath: String,
         inputTokens: Int = 1_000,

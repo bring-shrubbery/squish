@@ -125,19 +125,34 @@ public actor CostLedgerStore {
                 $0.session.isSubagent == session.isSubagent ? $0 : nil
             }
             let calculatedCost = session.cost(using: catalog)
+            // A newer catalog re-prices the whole session, downward too: the stored cost came
+            // from rates that have since been corrected.
+            let repriced = existing.map { $0.pricingEffectiveDate < catalog.effectiveDate } ?? false
             let shouldRefresh = existing?.session != session
                 || (existing?.cost == nil && calculatedCost != nil)
+                || (repriced && calculatedCost != nil)
             guard shouldRefresh else { continue }
 
-            let recordedCost = monotonicCost(
-                existing: matchingExisting?.cost,
-                calculated: calculatedCost
-            )
-            let dailyCosts = updatedDailyCosts(
-                existing: matchingExisting,
-                session: session,
-                calculatedCost: recordedCost
-            )
+            let recordedCost: CostBreakdown?
+            let dailyCosts: [DailyCostBucket]
+            if repriced, let calculatedCost {
+                recordedCost = calculatedCost.nonnegative
+                dailyCosts = rescaledDailyCosts(
+                    existing: matchingExisting,
+                    session: session,
+                    cost: calculatedCost.nonnegative
+                )
+            } else {
+                recordedCost = monotonicCost(
+                    existing: matchingExisting?.cost,
+                    calculated: calculatedCost
+                )
+                dailyCosts = updatedDailyCosts(
+                    existing: matchingExisting,
+                    session: session,
+                    calculatedCost: recordedCost
+                )
+            }
             let entry = CostLedgerEntry(
                 session: session,
                 cost: recordedCost,
@@ -208,6 +223,38 @@ public actor CostLedgerStore {
             buckets.append(DailyCostBucket(day: day, cost: delta))
         }
         return buckets.sorted { $0.day < $1.day }
+    }
+
+    /// The existing daily buckets scaled, component by component, to a re-priced total, so the
+    /// spend stays on the days it happened. A component that was zero before lands on the
+    /// last day.
+    private func rescaledDailyCosts(
+        existing: CostLedgerEntry?,
+        session: CodingSession,
+        cost: CostBreakdown
+    ) -> [DailyCostBucket] {
+        guard let existing, let previous = existing.cost, !existing.dailyCosts.isEmpty else {
+            return [DailyCostBucket(day: Calendar.current.startOfDay(for: session.updatedAt), cost: cost)]
+        }
+        func scaled(_ value: Double, from old: Double, to new: Double) -> Double {
+            old > 0 ? value * new / old : 0
+        }
+        var buckets = existing.dailyCosts.map { bucket in
+            DailyCostBucket(
+                day: bucket.day,
+                cost: CostBreakdown(
+                    input: scaled(bucket.cost.input, from: previous.input, to: cost.input),
+                    cacheRead: scaled(bucket.cost.cacheRead, from: previous.cacheRead, to: cost.cacheRead),
+                    cacheWrite: scaled(bucket.cost.cacheWrite, from: previous.cacheWrite, to: cost.cacheWrite),
+                    output: scaled(bucket.cost.output, from: previous.output, to: cost.output)
+                )
+            )
+        }
+        let remainder = (cost - buckets.reduce(.zero) { $0 + $1.cost }).nonnegative
+        if remainder != .zero, let last = buckets.indices.last {
+            buckets[last] = DailyCostBucket(day: buckets[last].day, cost: buckets[last].cost + remainder)
+        }
+        return buckets
     }
 
     private func monotonicCost(
