@@ -68,14 +68,31 @@ the badge stays current. git work and sizing run off the main actor.
 A new sidebar section **Worktrees** (`AppSection.worktrees`) with a badge showing the
 flagged count when it is above zero.
 
-**Header:** total disk used by linked worktrees, the flagged total, the two thresholds as
-editable controls (age in days, size in GB), a "Flagged only" filter and Refresh.
+**Header:** total disk used by linked worktrees, the flagged total, how many of the
+worktrees the filter shows, the two thresholds as editable controls (age in days, size in GB)
+and Refresh.
 
-**List:** grouped by repo, rows sorted by size, largest first. A row shows the branch and
-path, the agent label, last activity ("3 weeks ago"), size ("Measuring…" until known), and
-chips for *Uncommitted changes*, *Unpushed commits*, *In use*, *Locked*, *Missing*.
-Rows past a threshold are highlighted and say which threshold. Actions: Reveal in Finder,
-Open in Terminal, Remove.
+**Filter bar** (`WorktreeFilter`, kept in the store so it survives leaving the section): a
+search over branch and path; a sort (largest, oldest, newest, name); and for each of
+*Flagged*, *In use*, *Unsaved work* (uncommitted or unpushed), *Agent-made*, *Locked* and
+*Missing* a three-way choice: any, only, hide. A minimum size (100 MB … 10 GB; unmeasured
+worktrees drop out) and a minimum idle time (1 day … 3 months; worktrees with no known
+activity drop out). "Reset filters" appears whenever anything is set. Every control is at
+its default shows everything.
+
+**Selection:** each row has a checkbox, each repo card a checkbox for its shown rows, and a
+selection bar above the list one for everything shown (mixed state when only some are
+selected). Rows whose removal is blocked (in use, locked, unreadable) cannot be selected and
+say why on hover. The bar shows the count and size selected, notes how many selected rows the
+filter currently hides, offers *Select ▸ All shown / Flagged shown / None*, and *Remove N
+selected*. The selection drops paths that disappear from a scan.
+
+**List:** grouped by repo, rows in the chosen order (largest first by default). A row shows
+the branch and path, the agent label, last activity ("3 weeks ago"), size ("Measuring…" until
+known), and chips for *Uncommitted changes*, *Unpushed commits*, *In use*, *Locked*, *Missing*.
+Rows past a threshold are highlighted and say which threshold; selected rows are tinted. A
+repo card says how many of its worktrees the filter hides. Actions: Reveal in Finder, Open in
+Terminal, Remove.
 
 The section follows the existing dark dashboard style (`AppColors`, the cards and rows of
 `CostDashboardView`).
@@ -98,15 +115,23 @@ The section follows the existing dark dashboard style (`AppColors`, the cards an
   with the reason.
 - `.pruneOnly` — the directory is missing; runs `git worktree prune`.
 
-**Remove flagged** removes every flagged worktree whose removal is `.confirm`, after one
-confirmation listing them and the total space. The others are skipped and named.
+**Remove selected** acts on the selection through a `WorktreeBulkPlan`
+(`WorktreePolicy.bulkPlan`), which sorts each chosen worktree into *clean* (`.confirm`),
+*losing work* (`.confirmLosingWork`), *prune* (`.pruneOnly`) or *skipped* (`.blocked`). The
+first confirmation names each group and the total space. When nothing chosen has work in it,
+one button removes them. Otherwise it offers "Remove N without work" and "Remove all M…";
+the latter leads to a second confirmation that lists, per worktree, exactly what is lost
+(the same text as a single removal), and runs the forced removals with those counts as the
+confirmed maximum. Prunes run first, then clean removals, then forced ones; each is its own
+git run and re-checks the worktree first, so one failure never stops the rest. The skipped
+ones are named afterwards.
 
 Immediately before `git worktree remove`, off the main actor, Squish re-reads the worktree
 from git (still listed, not locked, same branch, uncommitted and unpushed counts) and
 re-probes live sessions and process working directories. A plain removal is refused unless
 both counts are 0 and nothing is working in it; a forced one is refused if either count
-exceeds what the user confirmed or something is working in it. "Remove flagged" applies the
-plain check to each worktree. `git worktree remove` and `git worktree prune` run without a
+exceeds what the user confirmed or something is working in it. A bulk removal applies the
+plain check to each clean worktree and the forced check to each one whose loss was confirmed. `git worktree remove` and `git worktree prune` run without a
 timeout; reads keep the 15-second timeout (SIGTERM, then SIGKILL after 2 s).
 
 After any removal Squish runs `git worktree prune` in that repo, re-reads that repo, and

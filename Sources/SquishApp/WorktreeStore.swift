@@ -5,7 +5,17 @@ import SquishCore
 /// in the background, and removes worktrees through git.
 @MainActor
 final class WorktreeStore: ObservableObject {
-    @Published private(set) var scans: [RepoScan] = []
+    @Published private(set) var scans: [RepoScan] = [] {
+        didSet {
+            let listed = Set(scans.flatMap(\.worktrees).map(\.path))
+            let kept = selection.intersection(listed)
+            if kept != selection { selection = kept }
+        }
+    }
+    /// What the list shows; kept here so it survives leaving and reopening the section.
+    @Published var filter = WorktreeFilter()
+    /// Paths of the worktrees chosen for a bulk removal.
+    @Published private(set) var selection: Set<String> = []
     @Published private(set) var sizes: [String: Int64] = [:]
     @Published private(set) var unmeasurable: Set<String> = []
     @Published private(set) var isRefreshing = false
@@ -105,6 +115,10 @@ final class WorktreeStore: ObservableObject {
         WorktreePolicy.removal(for: worktree, activeSessionPaths: activeSessionPaths)
     }
 
+    func isInUse(_ worktree: Worktree) -> Bool {
+        WorktreePolicy.hasActiveSession(worktree, activeSessionPaths: activeSessionPaths)
+    }
+
     var flaggedCount: Int { worktrees.filter { !flags(for: $0).isEmpty }.count }
 
     var totalBytes: Int64 { worktrees.compactMap(\.sizeBytes).reduce(0, +) }
@@ -113,10 +127,64 @@ final class WorktreeStore: ObservableObject {
         worktrees.filter { !flags(for: $0).isEmpty }.compactMap(\.sizeBytes).reduce(0, +)
     }
 
-    func bulkPreview() -> (remove: [Worktree], skipped: [Worktree]) {
-        WorktreePolicy.bulkRemovable(
-            worktrees, thresholds: thresholds, activeSessionPaths: activeSessionPaths, now: Date()
-        )
+    // MARK: - Filtering
+
+    /// The worktrees the filter lets through, in the chosen order.
+    var visibleWorktrees: [Worktree] {
+        let now = Date()
+        let matching = worktrees.filter {
+            filter.matches($0, flagged: !flags(for: $0).isEmpty, inUse: isInUse($0), now: now)
+        }
+        return WorktreeFilter.sorted(matching, by: filter.sort)
+    }
+
+    func visibleWorktrees(in repoPath: String) -> [Worktree] {
+        visibleWorktrees.filter { $0.repoPath == repoPath }
+    }
+
+    // MARK: - Selection
+
+    /// Whether a row offers a checkbox: anything a bulk removal could act on.
+    func isSelectable(_ worktree: Worktree) -> Bool {
+        if case .blocked = removal(for: worktree) { return false }
+        return true
+    }
+
+    func isSelected(_ worktree: Worktree) -> Bool { selection.contains(worktree.path) }
+
+    var selectedWorktrees: [Worktree] { worktrees.filter { selection.contains($0.path) } }
+
+    var selectedBytes: Int64 { selectedWorktrees.compactMap(\.sizeBytes).reduce(0, +) }
+
+    func setSelected(_ worktree: Worktree, _ selected: Bool) {
+        if selected {
+            guard isSelectable(worktree) else { return }
+            selection.insert(worktree.path)
+        } else {
+            selection.remove(worktree.path)
+        }
+    }
+
+    /// Adds the selectable ones among the given worktrees.
+    func select(_ worktrees: [Worktree]) {
+        selection.formUnion(worktrees.filter(isSelectable).map(\.path))
+    }
+
+    func deselect(_ worktrees: [Worktree]) {
+        selection.subtract(worktrees.map(\.path))
+    }
+
+    func clearSelection() { selection = [] }
+
+    /// Replaces the selection with the flagged worktrees that are shown.
+    func selectFlagged() {
+        selection = []
+        select(visibleWorktrees.filter { !flags(for: $0).isEmpty })
+    }
+
+    /// What removing the selection would do, from the last scan.
+    func bulkPlan() -> WorktreeBulkPlan {
+        WorktreePolicy.bulkPlan(selectedWorktrees, activeSessionPaths: activeSessionPaths)
     }
 
     func refresh() {
@@ -249,9 +317,15 @@ final class WorktreeStore: ObservableObject {
 
     func prune(_ worktree: Worktree) async {
         guard !isRemoving else { return }
+        await pruneNow(worktree)
+    }
+
+    /// Returns whether git's record of the missing worktree was removed.
+    @discardableResult
+    private func pruneNow(_ worktree: Worktree) async -> Bool {
         guard let latest = current(worktree), removal(for: latest) == .pruneOnly else {
             rowErrors[worktree.path] = "The directory exists again; it can no longer be pruned."
-            return
+            return false
         }
         removalDepth += 1
         defer { removalDepth -= 1 }
@@ -266,22 +340,29 @@ final class WorktreeStore: ObservableObject {
         }.value
         rowErrors[worktree.path] = failure
         await rescan(repo: worktree.repoPath)
+        return failure == nil
     }
 
-    /// Removes exactly the given worktrees (the list the user confirmed), each only if it is
-    /// still clean and removable; returns the ones it skipped.
-    func removeFlagged(_ worktrees: [Worktree]) async -> [Worktree] {
-        guard !isRemoving else { return worktrees }
+    /// Carries out a plan the user confirmed: prunes the missing, removes the clean, and, only
+    /// when `losingWork` was confirmed too, force-removes the ones with work in them, each
+    /// losing at most the counts the user saw. Every step re-checks the worktree first; the
+    /// ones that no longer qualify, or that git refused, are returned as skipped. Each removal is its own git run, so
+    /// a failure on one worktree does not stop the rest.
+    func removePlanned(_ plan: WorktreeBulkPlan, losingWork: Bool) async -> [Worktree] {
+        guard !isRemoving else { return plan.acted }
         removalDepth += 1
         defer { removalDepth -= 1 }
         var skipped: [Worktree] = []
         var total: Int64 = 0
-        for worktree in worktrees {
+        for worktree in plan.prune where !(await pruneNow(worktree)) {
+            skipped.append(worktree)
+        }
+        for worktree in plan.clean {
             guard let latest = current(worktree), removal(for: latest) == .confirm else {
                 skipped.append(worktree)
                 continue
             }
-            if let freed = await self.remove(
+            if let freed = await remove(
                 worktree, force: false, confirmedUncommitted: 0, confirmedUnpushed: 0, showsReclaimed: false
             ) {
                 total += freed
@@ -289,7 +370,18 @@ final class WorktreeStore: ObservableObject {
                 skipped.append(worktree)
             }
         }
-        showReclaimed(total)
+        // Without `losingWork` the user chose to leave these; they are not skipped.
+        for loss in plan.losingWork where losingWork {
+            if let freed = await remove(
+                loss.worktree, force: true, confirmedUncommitted: loss.uncommitted,
+                confirmedUnpushed: loss.unpushed, showsReclaimed: false
+            ) {
+                total += freed
+            } else {
+                skipped.append(loss.worktree)
+            }
+        }
+        if total > 0 { showReclaimed(total) }
         return skipped
     }
 

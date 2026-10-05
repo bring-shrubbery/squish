@@ -128,15 +128,33 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertEqual(WorktreePolicy.flags(for: gone, thresholds: WorktreeThresholds(), activeSessionPaths: [], now: now), [])
     }
 
-    func testBulkRemovableTakesOnlyCleanFlaggedOnes() {
-        let oldClean = make(path: "/a", lastActivity: now.addingTimeInterval(-30 * day))
-        let oldDirty = make(path: "/b", lastActivity: now.addingTimeInterval(-30 * day), uncommitted: 1)
-        let fresh = make(path: "/c", lastActivity: now)
-        let result = WorktreePolicy.bulkRemovable(
-            [oldClean, oldDirty, fresh], thresholds: WorktreeThresholds(), activeSessionPaths: [], now: now
+    func testBulkPlanSortsEachWorktreeByItsRemoval() {
+        let clean = make(path: "/a")
+        let dirty = make(path: "/b", uncommitted: 1, unpushed: 2)
+        let gone = make(path: "/c", prunable: true)
+        let locked = make(path: "/d", locked: true)
+        let busy = make(path: "/e")
+        let plan = WorktreePolicy.bulkPlan([clean, dirty, gone, locked, busy], activeSessionPaths: ["/e/src"])
+        XCTAssertEqual(plan.clean.map(\.path), ["/a"])
+        XCTAssertEqual(
+            plan.losingWork,
+            [.init(worktree: dirty, uncommitted: 1, unpushed: 2, detached: false)]
         )
-        XCTAssertEqual(result.remove.map(\.path), ["/a"])
-        XCTAssertEqual(result.skipped.map(\.path), ["/b"])
+        XCTAssertEqual(plan.prune.map(\.path), ["/c"])
+        XCTAssertEqual(plan.skipped.map(\.worktree.path), ["/d", "/e"])
+        XCTAssertEqual(plan.skipped.last?.reason, WorktreePolicy.activeReason)
+        XCTAssertEqual(plan.acted.map(\.path), ["/a", "/b", "/c"])
+        XCTAssertFalse(plan.isEmpty)
+    }
+
+    func testBulkPlanOfOnlyBlockedWorktreesIsEmptyAndSumsSizes() {
+        XCTAssertTrue(WorktreePolicy.bulkPlan([make(locked: true)], activeSessionPaths: []).isEmpty)
+        XCTAssertTrue(WorktreePolicy.bulkPlan([], activeSessionPaths: []).isEmpty)
+        let plan = WorktreePolicy.bulkPlan(
+            [make(path: "/a", size: 10), make(path: "/b", size: 5, uncommitted: 1), make(path: "/c")],
+            activeSessionPaths: []
+        )
+        XCTAssertEqual(plan.bytes, 15)
     }
 
     private func session(path: String, updatedAt: Date) -> CodingSession {

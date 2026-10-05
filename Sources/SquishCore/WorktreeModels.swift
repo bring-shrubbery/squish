@@ -190,19 +190,4 @@ public enum WorktreePolicy {
         }
         return nil
     }
-
-    /// The flagged worktrees "Remove flagged" removes (clean ones) and skips (the rest).
-    public static func bulkRemovable(
-        _ worktrees: [Worktree],
-        thresholds: WorktreeThresholds,
-        activeSessionPaths: [String],
-        now: Date
-    ) -> (remove: [Worktree], skipped: [Worktree]) {
-        let flagged = worktrees.filter {
-            !flags(for: $0, thresholds: thresholds, activeSessionPaths: activeSessionPaths, now: now).isEmpty
-        }
-        let remove = flagged.filter { removal(for: $0, activeSessionPaths: activeSessionPaths) == .confirm }
-        let skipped = flagged.filter { removal(for: $0, activeSessionPaths: activeSessionPaths) != .confirm }
-        return (remove, skipped)
-    }
 }
