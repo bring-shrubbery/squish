@@ -67,14 +67,20 @@ final class AppLifecycle: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow, Self.isMainWindow(window) else { return }
-            MainActor.assumeIsolated { self?.windowWillClose(window) }
+            guard let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard Self.isMainWindow(window) else { return }
+                self?.windowWillClose(window)
+            }
         })
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow, Self.isMainWindow(window) else { return }
-            MainActor.assumeIsolated { self?.showInDock(true) }
+            guard let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard Self.isMainWindow(window) else { return }
+                self?.showInDock(true)
+            }
         })
     }
 
