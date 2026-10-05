@@ -13,6 +13,7 @@ import SwiftUI
 ///   filters          toggles the Worktrees filter popover
 ///   remove           opens the removal confirmation for the selection
 ///   unpriced         toggles the Costs page's unpriced-models popover
+///   period <today|week|month|all>   selects the Costs page's period
 ///   quitcommand      what the app menu's Quit Squish (⌘Q) does
 ///   open             what the menu bar item's Open Squish does
 ///   front            appends the frontmost app and the window count to <dir>/front.log
@@ -27,6 +28,7 @@ enum DebugSnapshots {
     static let filtersNotification = Notification.Name("squish.debug.filters")
     static let removeNotification = Notification.Name("squish.debug.remove")
     static let unpricedNotification = Notification.Name("squish.debug.unpriced")
+    static let periodNotification = Notification.Name("squish.debug.period")
 
     private static var handled = 0
     private static var timer: Timer?
@@ -67,6 +69,8 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: removeNotification, object: nil)
         case "unpriced":
             NotificationCenter.default.post(name: unpricedNotification, object: nil)
+        case "period":
+            NotificationCenter.default.post(name: periodNotification, object: argument)
         case "quitcommand":
             lifecycle.quitCommand()
         case "open":

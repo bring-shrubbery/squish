@@ -2,13 +2,15 @@ import AppKit
 import Charts
 import SquishCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CostDashboardView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var period = CostPeriod.month
     @State private var isShowingUnpriced = false
 
     var body: some View {
-        let snapshot = CostDashboardSnapshot(entries: appState.costEntries)
+        let report = CostReport(entries: appState.costEntries, period: period)
         let liveSessionIDs = Set(appState.sessions.map(\.id))
         // A scroll view with lazy session rows: a grouped Form lays out every row on every
         // update, which stalls the window once the ledger has hundreds of sessions.
@@ -16,90 +18,67 @@ struct CostDashboardView: View {
             SettingsGroup {
                 HStack(alignment: .top, spacing: 0) {
                     Stat(
-                        label: "Total",
-                        value: currency(snapshot.total.total),
-                        detail: "\(snapshot.pricedSessionCount) priced sessions"
+                        label: period.title,
+                        value: currency(report.total.total),
+                        detail: comparison(for: report)
                     )
                     Divider()
                     Stat(
                         label: "Input",
-                        value: currency(snapshot.total.input),
-                        detail: "\(compactTokenCount(snapshot.inputTokens)) tokens"
+                        value: currency(report.total.input),
+                        detail: share(report.total.input, of: report.total.total)
                     )
                     Divider()
                     Stat(
                         label: "Cache",
-                        value: currency(snapshot.total.cacheRead + snapshot.total.cacheWrite),
-                        detail: "\(compactTokenCount(snapshot.cachedReadTokens)) tokens read"
+                        value: currency(report.total.cacheRead + report.total.cacheWrite),
+                        detail: share(report.total.cacheRead + report.total.cacheWrite, of: report.total.total)
                     )
                     Divider()
                     Stat(
                         label: "Output",
-                        value: currency(snapshot.total.output),
-                        detail: "\(compactTokenCount(snapshot.outputTokens)) tokens"
+                        value: currency(report.total.output),
+                        detail: share(report.total.output, of: report.total.total)
                     )
                 }
                 .padding(.vertical, 10)
             }
 
             SettingsGroup {
-                if snapshot.dailyCosts.isEmpty {
-                    Text("Usage appears after a session is detected.")
+                if report.dailyCosts.isEmpty {
+                    Text(report.entries.isEmpty ? "Usage appears after a session is detected." : "No spend \(periodPhrase).")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
-                    Chart(snapshot.dailyCosts) { point in
-                        BarMark(
-                            x: .value("Day", point.date, unit: .day),
-                            y: .value("Cost", point.amount)
-                        )
-                        .foregroundStyle(Color.accentColor)
-                        .cornerRadius(3)
-                    }
-                    .chartYAxis {
-                        AxisMarks(position: .leading) { value in
-                            AxisGridLine()
-                            AxisValueLabel {
-                                if let amount = value.as(Double.self) {
-                                    Text(currency(amount))
-                                }
-                            }
-                        }
-                    }
-                    .frame(height: 160)
-                    .padding(.vertical, 10)
+                    SpendChart(dailyCosts: report.dailyCosts, interval: report.interval)
+                        .frame(height: 160)
+                        .padding(.vertical, 10)
                 }
             } header: {
                 Text("Spend by Day")
             }
 
-            SettingsGroup {
-                CompositionRow(label: "Input", amount: snapshot.total.input, total: snapshot.total.total)
-                SettingsDivider()
-                CompositionRow(label: "Cache reads", amount: snapshot.total.cacheRead, total: snapshot.total.total)
-                SettingsDivider()
-                CompositionRow(label: "Cache writes", amount: snapshot.total.cacheWrite, total: snapshot.total.total)
-                SettingsDivider()
-                CompositionRow(label: "Output", amount: snapshot.total.output, total: snapshot.total.total)
-            } header: {
-                Text("Composition")
-            }
+            ShareGroup(title: "By Project", shares: report.byProject, total: report.total.total, periodPhrase: periodPhrase)
+            ShareGroup(title: "By Model", shares: report.byModel, total: report.total.total, periodPhrase: periodPhrase)
 
             SettingsGroup {
-                if appState.costEntries.isEmpty {
-                    Text("No sessions yet. Start a coding agent in this folder or one of its subfolders.")
+                if report.entries.isEmpty {
+                    Text(appState.costEntries.isEmpty
+                        ? "No sessions yet. Start a coding agent in this folder or one of its subfolders."
+                        : "No sessions \(periodPhrase).")
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 8)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(appState.costEntries) { entry in
+                        ForEach(report.entries) { entry in
                             SessionCostRow(
                                 session: entry.session,
                                 cost: entry.cost,
+                                periodCost: period == .all ? nil : report.periodCostByEntryID[entry.id],
                                 isArchived: !liveSessionIDs.contains(entry.id)
                             )
                             .equatable()
-                            if entry.id != appState.costEntries.last?.id {
+                            if entry.id != report.entries.last?.id {
                                 SettingsDivider()
                             }
                         }
@@ -109,12 +88,12 @@ struct CostDashboardView: View {
                 HStack {
                     Text("Sessions")
                     Spacer()
-                    if snapshot.unpricedSessionCount > 0 {
+                    if report.unpricedSessionCount > 0 {
                         Button {
                             isShowingUnpriced.toggle()
                         } label: {
                             HStack(spacing: 3) {
-                                Text("\(snapshot.unpricedSessionCount) without pricing")
+                                Text("\(report.unpricedSessionCount) without pricing")
                                 Image(systemName: "chevron.down")
                                     .font(.caption2.weight(.semibold))
                             }
@@ -125,25 +104,233 @@ struct CostDashboardView: View {
                         .buttonStyle(.plain)
                         .help("Which models have no price in the catalog")
                         .popover(isPresented: $isShowingUnpriced, arrowEdge: .bottom) {
-                            UnpricedModelsPopover(models: snapshot.unpricedModels)
+                            UnpricedModelsPopover(models: unpricedModels(in: report))
                         }
                     }
                 }
             } footer: {
-                FormFooter("Prices are API equivalents in USD, updated 5 Oct 2026. Subscription plans may differ.")
+                FormFooter(
+                    "Prices are API equivalents in USD, updated \(PricingCatalog.current.effectiveDate.formatted(date: .abbreviated, time: .omitted)). "
+                        + "Subscription plans may differ."
+                )
             }
         }
-        .navigationSubtitle(subtitle)
+        .navigationSubtitle(subtitle(for: report))
+        .toolbar {
+            ToolbarItemGroup {
+                Picker("Period", selection: $period) {
+                    ForEach(CostPeriod.allCases) { period in
+                        Text(period.title).tag(period)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .help("The period the totals, breakdowns and sessions cover")
+                Button {
+                    export(report)
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                }
+                .help("Save the sessions shown as a CSV file")
+                .disabled(report.entries.isEmpty)
+            }
+        }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugSnapshots.unpricedNotification)) { _ in
             isShowingUnpriced.toggle()
         }
+        .onReceive(NotificationCenter.default.publisher(for: DebugSnapshots.periodNotification)) { notification in
+            if let raw = notification.object as? String, let next = CostPeriod(rawValue: raw) { period = next }
+        }
         #endif
     }
 
-    private var subtitle: String {
-        let count = appState.costEntries.count
-        return count == 1 ? "1 session" : "\(count) sessions"
+    private var periodPhrase: String {
+        switch period {
+        case .today: "today"
+        case .week: "this week"
+        case .month: "this month"
+        case .all: "yet"
+        }
+    }
+
+    private func subtitle(for report: CostReport) -> String {
+        let count = report.entries.count
+        let sessions = count == 1 ? "1 session" : "\(count) sessions"
+        return period == .all ? sessions : "\(sessions) \(periodPhrase)"
+    }
+
+    /// "+12% vs last week", or the session count when there is nothing to compare with.
+    private func comparison(for report: CostReport) -> String {
+        let count = report.pricedSessionCount
+        let sessions = count == 1 ? "1 priced session" : "\(count) priced sessions"
+        guard let name = period.comparisonName else { return sessions }
+        guard let change = report.changeFromPrevious else {
+            if let previous = report.previousTotal, previous.total == 0, report.total.total == 0 {
+                return "Nothing \(name) either"
+            }
+            return "Nothing spent \(name)"
+        }
+        if change >= 9 {
+            return "\(Int((change + 1).rounded()))× \(name)"
+        }
+        let percent = Int((abs(change) * 100).rounded())
+        let sign = change < 0 ? "−" : "+"
+        return "\(sign)\(percent)% vs \(name)"
+    }
+
+    private func share(_ amount: Double, of total: Double) -> String {
+        guard total > 0 else { return "0% of total" }
+        return "\(Int((amount / total * 100).rounded()))% of total"
+    }
+
+    private func unpricedModels(in report: CostReport) -> [UnpricedModel] {
+        let unpriced = Dictionary(grouping: report.entries.filter { $0.cost == nil }) {
+            "\($0.session.provider.rawValue):\($0.session.model)"
+        }
+        return unpriced.values.compactMap { group in
+            group.first.map { UnpricedModel(provider: $0.session.provider, model: $0.session.model, count: group.count) }
+        }
+        .sorted { lhs, rhs in
+            lhs.count != rhs.count ? lhs.count > rhs.count : lhs.model < rhs.model
+        }
+    }
+
+    private func export(_ report: CostReport) {
+        let panel = NSSavePanel()
+        panel.title = "Export Costs"
+        panel.nameFieldStringValue = exportFileName(for: report)
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? report.csv().write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func exportFileName(for report: CostReport) -> String {
+        let folder = appState.projectRoot?.lastPathComponent ?? "Squish"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let suffix: String
+        switch period {
+        case .all: suffix = "all-time"
+        case .today: suffix = formatter.string(from: Date())
+        case .week, .month:
+            suffix = report.interval.map {
+                "\(formatter.string(from: $0.start))-to-\(formatter.string(from: $0.end.addingTimeInterval(-1)))"
+            } ?? period.rawValue
+        }
+        return "\(folder) costs \(suffix).csv"
+    }
+}
+
+/// Daily bars over the period, with the period's full span as the axis so a quiet week still
+/// shows its seven days.
+private struct SpendChart: View {
+    let dailyCosts: [DayCost]
+    let interval: DateInterval?
+
+    var body: some View {
+        Chart(dailyCosts) { point in
+            BarMark(
+                x: .value("Day", point.day, unit: .day),
+                y: .value("Cost", point.amount)
+            )
+            .foregroundStyle(Color.accentColor)
+            .cornerRadius(3)
+        }
+        .chartXScale(domain: domain)
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let amount = value.as(Double.self) {
+                        Text(currency(amount))
+                    }
+                }
+            }
+        }
+    }
+
+    private var domain: ClosedRange<Date> {
+        if let interval {
+            return interval.start...interval.end
+        }
+        let first = dailyCosts.first?.day ?? Date()
+        let last = dailyCosts.last?.day ?? Date()
+        return first...Calendar.current.date(byAdding: .day, value: 1, to: last)!
+    }
+}
+
+/// Spend by project or by model: the largest first, the rest folded into one line.
+private struct ShareGroup: View {
+    let title: String
+    let shares: [CostShare]
+    let total: Double
+    let periodPhrase: String
+
+    private static let shown = 8
+
+    var body: some View {
+        SettingsGroup {
+            if shares.isEmpty {
+                Text("No spend \(periodPhrase).")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                let top = shares.prefix(Self.shown)
+                ForEach(top) { share in
+                    ShareRow(name: share.name, detail: sessionCount(share.sessionCount), amount: share.amount, total: total)
+                    if share.id != top.last?.id || shares.count > Self.shown {
+                        SettingsDivider()
+                    }
+                }
+                if shares.count > Self.shown {
+                    let rest = shares.dropFirst(Self.shown)
+                    ShareRow(
+                        name: "\(rest.count) more",
+                        detail: sessionCount(rest.reduce(0) { $0 + $1.sessionCount }),
+                        amount: rest.reduce(0) { $0 + $1.amount },
+                        total: total
+                    )
+                }
+            }
+        } header: {
+            Text(title)
+        }
+    }
+
+    private func sessionCount(_ count: Int) -> String {
+        count == 1 ? "1 session" : "\(count) sessions"
+    }
+}
+
+private struct ShareRow: View {
+    let name: String
+    let detail: String
+    let amount: Double
+    let total: Double
+
+    var body: some View {
+        let fraction = total > 0 ? amount / total : 0
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            ProgressView(value: fraction)
+                .frame(width: 140)
+            Text("\(Int((fraction * 100).rounded()))%")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
+            Text(currency(amount))
+                .monospacedDigit()
+                .frame(width: 72, alignment: .trailing)
+        }
+        .padding(.vertical, 7)
     }
 }
 
@@ -170,32 +357,11 @@ private struct Stat: View {
     }
 }
 
-private struct CompositionRow: View {
-    let label: String
-    let amount: Double
-    let total: Double
-
-    var body: some View {
-        let fraction = total > 0 ? amount / total : 0
-        SettingsRow(label) {
-            HStack(spacing: 12) {
-                ProgressView(value: fraction)
-                    .frame(width: 140)
-                Text("\(Int((fraction * 100).rounded()))%")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, alignment: .trailing)
-                Text(currency(amount))
-                    .monospacedDigit()
-                    .frame(width: 72, alignment: .trailing)
-            }
-        }
-    }
-}
-
 private struct SessionCostRow: View, Equatable {
     let session: CodingSession
     let cost: CostBreakdown?
+    /// The part of the cost that falls in the selected period; nil for all time.
+    let periodCost: CostBreakdown?
     let isArchived: Bool
 
     private var details: String {
@@ -219,8 +385,13 @@ private struct SessionCostRow: View, Equatable {
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 2) {
                 if let cost {
-                    Text(currency(cost.total))
-                        .monospacedDigit()
+                    if let periodCost, abs(periodCost.total - cost.total) >= 0.005 {
+                        Text("\(currency(periodCost.total)) of \(currency(cost.total))")
+                            .monospacedDigit()
+                    } else {
+                        Text(currency(cost.total))
+                            .monospacedDigit()
+                    }
                 } else {
                     Text("—")
                         .foregroundStyle(.secondary)
@@ -301,54 +472,6 @@ private struct UnpricedModelsPopover: View {
             .frame(maxHeight: 320)
         }
         .frame(width: 380)
-    }
-}
-
-private struct DailyCost: Identifiable {
-    let date: Date
-    let amount: Double
-    var id: Date { date }
-}
-
-private struct CostDashboardSnapshot {
-    let total: CostBreakdown
-    let pricedSessionCount: Int
-    let unpricedSessionCount: Int
-    let inputTokens: Int
-    let cachedReadTokens: Int
-    let outputTokens: Int
-    let dailyCosts: [DailyCost]
-    /// Most used first.
-    let unpricedModels: [UnpricedModel]
-
-    init(entries: [CostLedgerEntry]) {
-        let priced = entries.compactMap { entry in
-            entry.cost.map { (entry, $0) }
-        }
-        total = priced.reduce(.zero) { $0 + $1.1 }
-        pricedSessionCount = priced.count
-        unpricedSessionCount = entries.count - priced.count
-        inputTokens = entries.reduce(0) { $0 + $1.session.usage.inputTokens }
-        cachedReadTokens = entries.reduce(0) { $0 + $1.session.usage.cachedReadTokens }
-        outputTokens = entries.reduce(0) { $0 + $1.session.usage.outputTokens }
-
-        let calendar = Calendar.current
-        let buckets = entries.flatMap(\.dailyCosts)
-        let grouped = Dictionary(grouping: buckets) { calendar.startOfDay(for: $0.day) }
-        dailyCosts = grouped.map { date, rows in
-            DailyCost(date: date, amount: rows.reduce(0) { $0 + $1.cost.total })
-        }
-        .sorted { $0.date < $1.date }
-
-        let unpriced = Dictionary(grouping: entries.filter { $0.cost == nil }) {
-            "\($0.session.provider.rawValue):\($0.session.model)"
-        }
-        unpricedModels = unpriced.values.compactMap { group in
-            group.first.map { UnpricedModel(provider: $0.session.provider, model: $0.session.model, count: group.count) }
-        }
-        .sorted { lhs, rhs in
-            lhs.count != rhs.count ? lhs.count > rhs.count : lhs.model < rhs.model
-        }
     }
 }
 
