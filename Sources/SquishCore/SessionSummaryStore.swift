@@ -21,13 +21,28 @@ final class SessionSummaryStore {
         self.fileManager = fileManager
         if let directory {
             try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            Self.removeSupersededCaches(next: directory, fileManager: fileManager)
         }
     }
+
+    /// Bump the version whenever parsing changes in a way that should re-read unchanged logs.
+    static let cacheVersion = 6
 
     static func defaultDirectory(fileManager: FileManager) -> URL? {
         fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("com.squish.sessions", isDirectory: true)
-            .appendingPathComponent("session-summaries-v5", isDirectory: true)
+            .appendingPathComponent("session-summaries-v\(cacheVersion)", isDirectory: true)
+    }
+
+    /// Earlier versions' caches are never read again; drop them so they stop taking space.
+    private static func removeSupersededCaches(next directory: URL, fileManager: FileManager) {
+        let parent = directory.deletingLastPathComponent()
+        guard let siblings = try? fileManager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) else { return }
+        for sibling in siblings
+        where sibling.lastPathComponent.hasPrefix("session-summaries-v")
+            && sibling.lastPathComponent != directory.lastPathComponent {
+            try? fileManager.removeItem(at: sibling)
+        }
     }
 
     func session(

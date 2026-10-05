@@ -119,6 +119,30 @@ final class SessionParserTests: XCTestCase {
         )
     }
 
+    func testClaudeParserIgnoresSyntheticPlaceholderModel() throws {
+        let file = temporaryDirectory.appendingPathComponent("claude-synthetic.jsonl")
+        let real: [String: Any] = [
+            "timestamp": "2026-07-10T10:01:00Z", "type": "assistant", "sessionId": "session-s",
+            "cwd": projectDirectory.path,
+            "message": ["model": "claude-opus-5", "usage": ["input_tokens": 20, "output_tokens": 30]]
+        ]
+        let synthetic: [String: Any] = [
+            "timestamp": "2026-07-10T10:02:00Z", "type": "assistant", "sessionId": "session-s",
+            "cwd": projectDirectory.path,
+            "message": ["model": "<synthetic>", "usage": ["input_tokens": 0, "output_tokens": 0]]
+        ]
+        try writeJSONLines([real, synthetic], to: file)
+        let session = try XCTUnwrap(ClaudeSessionParser().parse(url: file, projectRoot: temporaryDirectory))
+        XCTAssertEqual(session.model, "claude-opus-5")
+
+        // Only placeholders: no model, no tokens, and so a known cost of nothing.
+        let empty = temporaryDirectory.appendingPathComponent("claude-empty.jsonl")
+        try writeJSONLines([synthetic], to: empty)
+        let emptySession = try XCTUnwrap(ClaudeSessionParser().parse(url: empty, projectRoot: temporaryDirectory))
+        XCTAssertEqual(emptySession.model, "Unreported model")
+        XCTAssertEqual(emptySession.cost(), .zero)
+    }
+
     func testClaudeParserSkipsInjectedCommandMessagesForTitle() throws {
         let file = temporaryDirectory.appendingPathComponent("claude-caveat.jsonl")
         try writeJSONLines([

@@ -233,7 +233,7 @@ public struct ClaudeSessionParser: SessionLogParser {
                   let usage = message["usage"] as? [String: Any] else { return }
 
             updatedAt = later(updatedAt, eventDate) ?? updatedAt
-            model = string(message["model"]) ?? model
+            model = reportedModel(message["model"]) ?? model
             let requestUsage = claudeTokenUsage(usage)
             aggregate = aggregate + requestUsage
             latestContextTokens = requestUsage.totalTokens
@@ -296,7 +296,7 @@ public struct ClaudeSessionParser: SessionLogParser {
                   let message = object["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { return }
 
-            model = string(message["model"]) ?? model
+            model = reportedModel(message["model"]) ?? model
             let requestUsage = claudeTokenUsage(usage)
             aggregate = aggregate + requestUsage
             latestContextTokens = requestUsage.totalTokens
@@ -501,6 +501,13 @@ private func int(_ value: Any?) -> Int? {
     if let value = value as? NSNumber { return value.intValue }
     if let value = value as? String { return Int(value) }
     return nil
+}
+
+/// The model named on a message, unless it is Claude Code's `<synthetic>` placeholder, which
+/// marks a message the client generated itself (an interruption notice, for example).
+private func reportedModel(_ value: Any?) -> String? {
+    guard let name = string(value), !name.isEmpty, name != "<synthetic>" else { return nil }
+    return name
 }
 
 private func dateValue(_ value: Any?) -> Date? {

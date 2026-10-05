@@ -35,6 +35,8 @@ public struct TokenUsage: Codable, Equatable, Sendable {
         self.outputTokens = max(0, outputTokens)
     }
 
+    public var isEmpty: Bool { totalInputTokens == 0 && outputTokens == 0 }
+
     public var totalInputTokens: Int {
         inputTokens + cachedReadTokens + cacheWrite5mTokens + cacheWrite1hTokens
     }
@@ -145,8 +147,11 @@ public struct CodingSession: Identifiable, Codable, Equatable, Sendable {
         URL(fileURLWithPath: projectPath).lastPathComponent
     }
 
+    /// Nil when the catalog has no price for the model; zero when no tokens were used, since
+    /// that costs nothing whatever the model was.
     public func cost(using catalog: PricingCatalog = .current) -> CostBreakdown? {
-        catalog.price(for: model, provider: provider)?.cost(
+        if usage.isEmpty { return .zero }
+        return catalog.price(for: model, provider: provider)?.cost(
             usage: usage,
             currentContextTokens: contextTokens
         )

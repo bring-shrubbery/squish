@@ -193,6 +193,34 @@ final class CostLedgerStoreTests: XCTestCase {
         XCTAssertEqual(migrated.dailyCosts, staleEntry.dailyCosts)
     }
 
+    func testLoadingRepricesEntriesFromAnOlderCatalog() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let ledgerDirectory = root.appendingPathComponent("ledger", isDirectory: true)
+        try FileManager.default.createDirectory(at: ledgerDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Stored before the model had a price, by a catalog that is now out of date.
+        let session = makeSession(projectPath: root.path)
+        let stale = CostLedgerEntry(
+            session: session,
+            cost: nil,
+            pricingEffectiveDate: ISO8601DateFormatter().date(from: "2026-07-10T00:00:00Z")!
+        )
+        try JSONEncoder().encode(stale).write(to: ledgerDirectory.appendingPathComponent("stale.json"))
+
+        let ledger = CostLedgerStore(directory: ledgerDirectory)
+        let loadedEntries = await ledger.entries(projectRoot: root)
+        let loaded = try XCTUnwrap(loadedEntries.first)
+        XCTAssertEqual(loaded.cost, session.cost())
+        XCTAssertEqual(loaded.pricingEffectiveDate, PricingCatalog.current.effectiveDate)
+        XCTAssertEqual(loaded.dailyCosts.reduce(CostBreakdown.zero) { $0 + $1.cost }, session.cost())
+
+        // The repriced entry was written back, so a fresh store sees it priced too.
+        let reloadedEntries = await CostLedgerStore(directory: ledgerDirectory).entries(projectRoot: root)
+        XCTAssertEqual(reloadedEntries.first?.cost, session.cost())
+    }
+
     func testNewerCatalogRepricesStoredSessionsEvenDownward() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

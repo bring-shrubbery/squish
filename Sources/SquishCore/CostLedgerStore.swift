@@ -107,8 +107,8 @@ public actor CostLedgerStore {
         self.fileManager = fileManager
     }
 
-    public func entries(projectRoot: URL) -> [CostLedgerEntry] {
-        loadIfNeeded()
+    public func entries(projectRoot: URL, catalog: PricingCatalog = .current) -> [CostLedgerEntry] {
+        loadIfNeeded(catalog: catalog)
         return filteredEntries(projectRoot: projectRoot)
     }
 
@@ -117,7 +117,7 @@ public actor CostLedgerStore {
         projectRoot: URL,
         catalog: PricingCatalog = .current
     ) -> [CostLedgerEntry] {
-        loadIfNeeded()
+        loadIfNeeded(catalog: catalog)
 
         for session in sessions {
             let existing = entriesByID[session.id]
@@ -166,7 +166,7 @@ public actor CostLedgerStore {
         return filteredEntries(projectRoot: projectRoot)
     }
 
-    private func loadIfNeeded() {
+    private func loadIfNeeded(catalog: PricingCatalog) {
         guard !hasLoaded else { return }
         hasLoaded = true
         guard let directory else { return }
@@ -181,8 +181,12 @@ public actor CostLedgerStore {
             autoreleasepool {
                 guard let data = try? Data(contentsOf: file),
                       let entry = try? decoder.decode(CostLedgerEntry.self, from: data) else { return }
-                let normalized = normalized(entry)
+                var normalized = normalized(entry)
                 if let existing = entriesByID[normalized.id], existing.recordedAt > normalized.recordedAt { return }
+                if let repriced = repriced(normalized, with: catalog) {
+                    normalized = repriced
+                    persist(repriced)
+                }
                 entriesByID[normalized.id] = normalized
                 if normalized != entry { persist(normalized) }
             }
@@ -223,6 +227,21 @@ public actor CostLedgerStore {
             buckets.append(DailyCostBucket(day: day, cost: delta))
         }
         return buckets.sorted { $0.day < $1.day }
+    }
+
+    /// The entry at the catalog's rates when the catalog is newer than the entry and can price
+    /// its session; nil otherwise.
+    private func repriced(_ entry: CostLedgerEntry, with catalog: PricingCatalog) -> CostLedgerEntry? {
+        guard entry.pricingEffectiveDate < catalog.effectiveDate,
+              let cost = entry.session.cost(using: catalog)?.nonnegative
+        else { return nil }
+        return CostLedgerEntry(
+            session: entry.session,
+            cost: cost,
+            dailyCosts: rescaledDailyCosts(existing: entry, session: entry.session, cost: cost),
+            pricingEffectiveDate: catalog.effectiveDate,
+            recordedAt: entry.recordedAt
+        )
     }
 
     /// The existing daily buckets scaled, component by component, to a re-priced total, so the
