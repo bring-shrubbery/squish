@@ -13,6 +13,11 @@ import SwiftUI
 ///   filters          toggles the Worktrees filter popover
 ///   remove           opens the removal confirmation for the selection
 ///   unpriced         toggles the Costs page's unpriced-models popover
+///   quitcommand      what the app menu's Quit Squish (⌘Q) does
+///   open             what the menu bar item's Open Squish does
+///   front            appends the frontmost app and the window count to <dir>/front.log
+///   sheet <1|2>      presses the first or second button of the window's alert sheet
+///   settings         opens the Settings window
 ///   scroll <dy> [n]  posts n scroll-wheel events of dy points to the window (default 1)
 ///   hover <x> <y>    posts a mouse-moved event at window coordinates
 ///   snap <name>      writes <name>-<n>.png for every visible window (main window, popovers, sheets)
@@ -26,7 +31,7 @@ enum DebugSnapshots {
     private static var handled = 0
     private static var timer: Timer?
 
-    static func start(_ appState: AppState, worktrees: WorktreeStore) {
+    static func start(_ appState: AppState, worktrees: WorktreeStore, lifecycle: AppLifecycle) {
         guard timer == nil, let dir = ProcessInfo.processInfo.environment["SQUISH_SNAPSHOT_DIR"] else { return }
         let commands = URL(fileURLWithPath: dir).appendingPathComponent("commands")
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
@@ -34,14 +39,16 @@ enum DebugSnapshots {
                 let lines = (try? String(contentsOf: commands, encoding: .utf8))?
                     .split(separator: "\n").map(String.init) ?? []
                 while handled < lines.count {
-                    run(lines[handled], appState: appState, worktrees: worktrees, dir: dir)
+                    run(lines[handled], appState: appState, worktrees: worktrees, lifecycle: lifecycle, dir: dir)
                     handled += 1
                 }
             }
         }
     }
 
-    private static func run(_ line: String, appState: AppState, worktrees: WorktreeStore, dir: String) {
+    private static func run(
+        _ line: String, appState: AppState, worktrees: WorktreeStore, lifecycle: AppLifecycle, dir: String
+    ) {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         guard let command = parts.first else { return }
         let argument = parts.count > 1 ? parts[1] : ""
@@ -60,6 +67,35 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: removeNotification, object: nil)
         case "unpriced":
             NotificationCenter.default.post(name: unpricedNotification, object: nil)
+        case "quitcommand":
+            lifecycle.quitCommand()
+        case "open":
+            lifecycle.open()
+        case "sheet":
+            if let window = NSApp.windows.first(where: { $0.attachedSheet != nil }), let sheet = window.attachedSheet {
+                let code: NSApplication.ModalResponse = argument == "2" ? .alertSecondButtonReturn : .alertFirstButtonReturn
+                window.endSheet(sheet, returnCode: code)
+            }
+        case "settings":
+            // The Settings scene only opens while the app is active, which a terminal launch on
+            // a locked screen never is; host the same view in a plain window to check its layout.
+            let window = NSWindow(contentViewController: NSHostingController(
+                rootView: GeneralSettingsView().environmentObject(lifecycle)
+            ))
+            window.title = "Settings"
+            window.orderFrontRegardless()
+        case "front":
+            let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "none"
+            let windows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }.count
+            let list = NSApp.windows.map { "[\(type(of: $0)) '\($0.title)' visible=\($0.isVisible)]" }.joined(separator: " ")
+            let line = "\(front) windows=\(windows) active=\(NSApp.isActive) \(list)\n"
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("front.log")
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+            } else {
+                try? line.write(to: url, atomically: true, encoding: .utf8)
+            }
         case "scroll":
             let parts = argument.split(separator: " ").compactMap { Int($0) }
             let dy = parts.first ?? -10

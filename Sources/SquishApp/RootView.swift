@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var worktreeStore: WorktreeStore
+    @EnvironmentObject private var lifecycle: AppLifecycle
 
     var body: some View {
         Group {
@@ -16,7 +17,7 @@ struct RootView: View {
         }
         .onAppear {
             #if DEBUG
-            DebugSnapshots.start(appState, worktrees: worktreeStore)
+            DebugSnapshots.start(appState, worktrees: worktreeStore, lifecycle: lifecycle)
             #endif
         }
     }

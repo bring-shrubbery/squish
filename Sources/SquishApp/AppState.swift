@@ -52,6 +52,8 @@ final class AppState: ObservableObject {
         didSet { defaults.set(alertThreshold, forKey: Keys.alertThreshold) }
     }
     @Published private(set) var recentAlerts: [CompactAlertRecord] = []
+    /// Claude Code sessions waiting for an answer in the notch.
+    @Published private(set) var waitingRequestCount = 0
     @Published var liveChatsEnabled: Bool {
         didSet {
             defaults.set(liveChatsEnabled, forKey: Keys.liveChatsEnabled)
@@ -66,6 +68,8 @@ final class AppState: ObservableObject {
     private var liveChatsCancellable: AnyCancellable?
 
     var liveChatsHookInstalled: Bool { hookInstaller.isInstalled() }
+    /// Sessions that wrote to their log in the last minute and a half, as the notch counts them.
+    var activeSessionCount: Int { LiveActivity.chats(sessions: sessions, pending: []).count }
     var liveChatsAccessibilityGranted: Bool { hookInstaller.accessibilityGranted }
 
     private enum Keys {
@@ -227,6 +231,7 @@ final class AppState: ObservableObject {
         liveChatsCancellable = nil
         controlCenter.stop()
         liveChatsNotch.update(chats: [], pending: [])
+        waitingRequestCount = 0
     }
 
     private func refreshLiveChats() {
@@ -234,6 +239,8 @@ final class AppState: ObservableObject {
         let pending = controlCenter.pendingRequests
         let chats = LiveActivity.chats(sessions: sessions, pending: pending, now: Date())
         liveChatsNotch.update(chats: chats, pending: pending)
+        let waiting = Set(pending.map(\.sessionId)).count
+        if waiting != waitingRequestCount { waitingRequestCount = waiting }
     }
 
     private func restoreFolder() {
