@@ -26,6 +26,9 @@ final class PricingUpdater {
 
     private let documentURL: URL
     private let signatureURL: URL
+    /// Where the release itself keeps the files, for when the website's redirect is not up.
+    private static let fallbackDocumentURL = URL(string: "https://github.com/bring-shrubbery/squish/releases/latest/download/pricing.json")!
+    private static let fallbackSignatureURL = URL(string: "https://github.com/bring-shrubbery/squish/releases/latest/download/pricing.json.sig")!
     private let publicKey: String?
     private let cache: PricingCatalogCache
     private var timer: Timer?
@@ -80,7 +83,11 @@ final class PricingUpdater {
         let signatureURL = signatureURL
         checkTask = Task { [weak self] in
             defer { Task { @MainActor [weak self] in self?.checkTask = nil } }
-            guard let download = await Self.download(documentURL: documentURL, signatureURL: signatureURL) else { return }
+            var download = await Self.download(documentURL: documentURL, signatureURL: signatureURL)
+            if download == nil, documentURL != Self.fallbackDocumentURL {
+                download = await Self.download(documentURL: Self.fallbackDocumentURL, signatureURL: Self.fallbackSignatureURL)
+            }
+            guard let download else { return }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 status.lastCheck = Date()
