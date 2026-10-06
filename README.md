@@ -106,6 +106,6 @@ Squish is developed by a small team working with AI coding agents that we run an
 
 ## License
 
-Squish is licensed under the [Apache License 2.0](LICENSE). [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the third-party components: [DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit) and [Sparkle](https://github.com/sparkle-project/Sparkle), both MIT.
+Squish is licensed under the [Apache License 2.0](LICENSE). [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the third-party components: [DynamicLanding](https://github.com/bring-shrubbery/dynamic-landing) and [Sparkle](https://github.com/sparkle-project/Sparkle), both MIT.
 
 Squish is by [Antoni Silvestrovic](https://github.com/bring-shrubbery) at [Quassum](https://quassum.com), built with Claude Code.

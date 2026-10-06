@@ -1,64 +1,27 @@
 import AppKit
-import DynamicNotchKit
 import SquishCore
 import SwiftUI
 
+/// The compact alert: takes the island for ten seconds (five for a preview), then gives it
+/// back to whatever the live chats were showing.
 @MainActor
 final class NotchAlertController {
     static let shared = NotchAlertController()
 
-    private typealias AlertNotch = DynamicNotch<AnyView, EmptyView, EmptyView>
-
-    private var notch: AlertNotch?
-    private var presentationTask: Task<Void, Never>?
-
-    /// Called just before an alert takes over the notch, so another notch (e.g.
-    /// live chats) can step aside and be replaced rather than overlaid.
-    var onWillShow: (() -> Void)?
-    /// Called once the alert has fully hidden and nothing is replacing it.
-    var onDidHide: (() -> Void)?
     /// The alert's Compact button: sends the command to the session's terminal.
     var onCompact: ((CodingSession) -> TerminalBridge.Delivery)?
 
     private init() {}
 
     func show(session: CodingSession, threshold: Double, isPreview: Bool = false) {
-        presentationTask?.cancel()
-        onWillShow?()
-
-        let previousNotch = notch
         let onCompact = onCompact
-        let nextNotch = AlertNotch(style: .notch) {
-            AnyView(
-                NotchAlertView(session: session, threshold: threshold, isPreview: isPreview, onCompact: onCompact)
-                    .environment(\.colorScheme, .dark)
-            )
-        }
-        notch = nextNotch
-
-        let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
-
-        presentationTask = Task { [weak self] in
-            if let previousNotch { await previousNotch.hide() }
-            guard !Task.isCancelled else { return }
-            await nextNotch.expand(on: screen)
-
-            do {
-                try await Task.sleep(for: .seconds(isPreview ? 5 : 10))
-            } catch {
-                // Cancelled because a newer alert is replacing this one; that
-                // newer show() already fired onWillShow, so don't resume here.
-                return
-            }
-
-            await nextNotch.hide()
-            if self?.notch === nextNotch {
-                self?.notch = nil
-                self?.onDidHide?()
-            }
-        }
+        // A fresh identity per alert, so one alert's "Sent" label never carries into the next.
+        let view = AnyView(
+            NotchAlertView(session: session, threshold: threshold, isPreview: isPreview, onCompact: onCompact)
+                .environment(\.colorScheme, .dark)
+                .id("\(session.id)-\(Date().timeIntervalSinceReferenceDate)")
+        )
+        NotchIsland.shared.showAlert(view, for: .seconds(isPreview ? 5 : 10))
     }
 }
 
@@ -137,9 +100,6 @@ private struct NotchAlertView: View {
             }
         }
         .frame(width: 390)
-        .padding(.horizontal, 18)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
     }
 
     private var providerColor: Color {

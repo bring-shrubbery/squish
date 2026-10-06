@@ -1,25 +1,17 @@
 import AppKit
-import DynamicNotchKit
 import SquishCore
 import SwiftUI
 
-/// Presents the live-chats notch, driving DynamicNotchKit between the horizontal
-/// (compact), detail-panel (expanded), and request-prompt (expanded) states based
-/// on the current chats and pending requests.
+/// Presents the live chats in the island: the compact pill while sessions are active, the
+/// detail panel when asked, and the request prompt whenever something waits for an answer.
+///
+/// The views observe `LiveChatsModel`, so the island's content is set only when the state
+/// changes; everything inside updates in place.
 @MainActor
 final class LiveChatsNotchController {
-    private typealias Notch = DynamicNotch<
-        LiveChatsExpandedView,
-        LiveChatsCompactLeading,
-        LiveChatsCompactTrailing
-    >
-
     private let model = LiveChatsModel()
-    private var notch: Notch?
     private var panelRequested = false
-    private var suspended = false
     private var desiredState: DesiredState = .hidden
-    private var transitionTask: Task<Void, Never>?
 
     private enum DesiredState: Equatable { case hidden, compact, expanded }
 
@@ -43,7 +35,7 @@ final class LiveChatsNotchController {
         }
     }
 
-    /// Push the latest snapshot into the notch.
+    /// Push the latest snapshot into the island.
     func update(chats: [LiveChat], pending: [PendingRequest]) {
         model.chats = chats
         model.pending = pending
@@ -53,27 +45,14 @@ final class LiveChatsNotchController {
         reevaluate()
     }
 
-    /// Temporarily hide the live-chats notch so a compact alert can replace it.
-    func suspend() {
-        guard !suspended else { return }
-        suspended = true
-        transition(to: .hidden)
-    }
-
-    /// Restore the live-chats notch after a compact alert finishes.
-    func resume() {
-        guard suspended else { return }
-        suspended = false
-        reevaluate()
-    }
+    #if DEBUG
+    /// For `DebugSnapshots`: what tapping the compact pill does.
+    func debugExpand() { model.onExpandRequested?() }
+    #endif
 
     // MARK: - State machine
 
     private func reevaluate() {
-        if suspended {
-            transition(to: .hidden)
-            return
-        }
         if !model.pending.isEmpty {
             model.mode = .prompt
             if model.selectedTabID == nil || !model.pending.contains(where: { $0.id == model.selectedTabID }) {
@@ -95,43 +74,17 @@ final class LiveChatsNotchController {
     private func transition(to state: DesiredState) {
         guard state != desiredState else { return }
         desiredState = state
-        let notch = ensureNotch()
-        let screen = Self.preferredScreen()
-
-        transitionTask?.cancel()
-        transitionTask = Task { [weak self] in
-            switch state {
-            case .expanded: await notch.expand(on: screen)
-            case .compact: await notch.compact(on: screen)
-            case .hidden:
-                await notch.hide()
-                self?.notch = nil
-            }
-        }
-    }
-
-    private func ensureNotch() -> Notch {
-        if let notch { return notch }
         let model = model
-        // Force `.notch` style so the popup always renders as a black Dynamic
-        // Island (white content) regardless of display or system appearance —
-        // the `.floating` fallback uses a system material that looks like a light
-        // notification in light mode, and hides the compact state on non-notch
-        // displays. `.dark` keeps controls from adapting to a light appearance.
-        let created = Notch(
-            hoverBehavior: [.keepVisible],
-            style: .notch,
-            expanded: { LiveChatsExpandedView(model: model) },
-            compactLeading: { LiveChatsCompactLeading(model: model) },
-            compactTrailing: { LiveChatsCompactTrailing(model: model) }
-        )
-        notch = created
-        return created
-    }
-
-    private static func preferredScreen() -> NSScreen {
-        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
+        switch state {
+        case .hidden:
+            NotchIsland.shared.setStanding(.hidden)
+        case .compact:
+            NotchIsland.shared.setStanding(.compact(
+                leading: AnyView(LiveChatsCompactLeading(model: model)),
+                trailing: AnyView(LiveChatsCompactTrailing(model: model))
+            ))
+        case .expanded:
+            NotchIsland.shared.setStanding(.expanded(AnyView(LiveChatsExpandedView(model: model))))
+        }
     }
 }

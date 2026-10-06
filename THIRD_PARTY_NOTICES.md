@@ -4,15 +4,15 @@ Squish's own code is licensed under the Apache License 2.0 (see `LICENSE`). The 
 
 | Component | Use | Licence |
 | --- | --- | --- |
-| [DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit) | The notch alerts and live chats | MIT |
+| [DynamicLanding](https://github.com/bring-shrubbery/dynamic-landing) | The island at the notch for alerts and live chats | MIT |
 | [Sparkle](https://github.com/sparkle-project/Sparkle) | In-app updates (embedded as Sparkle.framework) | MIT, with notices for bundled components |
 
-## DynamicNotchKit
+## DynamicLanding
 
 ```text
 MIT License
 
-Copyright (c) 2025 Kai Azim
+Copyright (c) 2026 Quassum MB
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

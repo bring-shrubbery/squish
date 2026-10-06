@@ -53,7 +53,6 @@ struct LiveChatsCompactLeading: View {
                     .scaleEffect(chat.status == .working && pulse ? 1.18 : 1)
             }
         }
-        .padding(.leading, 6)
         .contentShape(Rectangle())
         .onTapGesture { model.onExpandRequested?() }
         .onAppear { updatePulse() }
@@ -87,7 +86,6 @@ struct LiveChatsCompactTrailing: View {
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
         }
-        .padding(.trailing, 6)
         .contentShape(Rectangle())
         .onTapGesture { model.onExpandRequested?() }
     }
@@ -106,9 +104,6 @@ struct LiveChatsExpandedView: View {
             }
         }
         .frame(width: 380)
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
         .environment(\.colorScheme, .dark)
     }
 }

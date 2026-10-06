@@ -154,11 +154,7 @@ final class AppState: ObservableObject {
         notifier.onOpen = { [weak self] sessionId in self?.openSession(id: sessionId) }
         notifier.onSettingsChange = { [weak self] in self?.applyHookFeatures() }
 
-        // A compact alert temporarily replaces the live-chats notch instead of
-        // overlaying it: hide live chats while the alert shows, restore it after.
-        NotchAlertController.shared.onWillShow = { [weak self] in self?.liveChatsNotch.suspend() }
         NotchAlertController.shared.onCompact = { TerminalBridge.compact($0) }
-        NotchAlertController.shared.onDidHide = { [weak self] in self?.liveChatsNotch.resume() }
 
         pricingUpdater.onCatalogChange = { [weak self] in self?.pricingCatalogDidChange() }
         pricingUpdater.start()
@@ -336,7 +332,9 @@ final class AppState: ObservableObject {
         }
         let pending = controlCenter.pendingRequests
         let chats = LiveActivity.chats(sessions: sessions, pending: pending, now: Date())
-        if liveChatsEnabled {
+        if debugNotchIsHeld {
+            // A harness preview owns the island; the real activity leaves it alone.
+        } else if liveChatsEnabled {
             liveChatsNotch.update(chats: chats, pending: pending)
         } else {
             liveChatsNotch.update(chats: [], pending: [])
@@ -438,6 +436,41 @@ final class AppState: ObservableObject {
     #if DEBUG
     /// For `DebugSnapshots`: watch a folder without saving the choice.
     func debugSetProjectRoot(_ url: URL) { setProjectRoot(url, persist: false) }
+
+    private var debugNotchIsHeld = false
+
+    /// For `DebugSnapshots`: puts made-up live chats in the island without hooks or the
+    /// control center. "off" hands the island back to the real activity.
+    func debugPreviewLiveChats(_ mode: String) {
+        guard mode != "off" else {
+            debugNotchIsHeld = false
+            refreshLiveActivity()
+            return
+        }
+        debugNotchIsHeld = true
+        let now = Date()
+        let real = sessions.filter { !$0.isSubagent }.prefix(3)
+        let chats = real.enumerated().map { index, session in
+            LiveChat(session: session, status: index == 0 ? .working : .idle)
+        }
+        guard let first = chats.first else { return }
+        let request = PendingRequest(
+            id: "preview-\(UUID().uuidString)", sessionId: first.session.id, cwd: first.session.projectPath,
+            kind: .permission, toolName: "Bash", inputSummary: "rm -rf build/", options: nil,
+            tty: nil, pid: nil, ppid: nil, createdAt: now
+        )
+        switch mode {
+        case "prompt":
+            liveChatsNotch.update(chats: chats, pending: [request])
+        case "expanded":
+            liveChatsNotch.update(chats: chats, pending: [])
+            liveChatsNotch.debugExpand()
+        default:
+            liveChatsNotch.update(chats: chats, pending: [])
+        }
+    }
+    #else
+    private let debugNotchIsHeld = false
     #endif
 
     private func setProjectRoot(_ url: URL, persist: Bool) {

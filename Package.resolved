@@ -1,13 +1,13 @@
 {
-  "originHash" : "88e34b1e38e017fa598feee2c71227a3e5585a507f20c2e2001d29e679d8634f",
+  "originHash" : "71e4126b23cc682de56894b8b125e01bfe5a3b72a5a9b662d6bdfc27fafd9ca4",
   "pins" : [
     {
-      "identity" : "dynamicnotchkit",
+      "identity" : "dynamic-landing",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/MrKai77/DynamicNotchKit",
+      "location" : "https://github.com/bring-shrubbery/dynamic-landing",
       "state" : {
-        "revision" : "cd0b3e52d537db115ad3a9d89601f20e0bee8d27",
-        "version" : "1.1.0"
+        "revision" : "f24f0014fbdc3589eab41b021adaa81215cc9448",
+        "version" : "0.1.4"
       }
     },
     {

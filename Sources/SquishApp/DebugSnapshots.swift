@@ -18,6 +18,7 @@ import SwiftUI
 ///   budget <amount> <today|week|month>   sets the spending limit; "budget none" removes it
 ///   budgeteditor     toggles the Costs page's budget popover
 ///   previewalert     shows the compact alert in the notch, as the Preview button does
+///   chats <compact|expanded|prompt|off>   puts made-up live chats in the island
 ///   quitcommand      what the app menu's Quit Squish (⌘Q) does
 ///   open             what the menu bar item's Open Squish does
 ///   closewindow      closes the main window, as ⌘W does
@@ -77,6 +78,8 @@ enum DebugSnapshots {
             NotificationCenter.default.post(name: unpricedNotification, object: nil)
         case "previewalert":
             appState.previewAlert()
+        case "chats":
+            appState.debugPreviewLiveChats(argument)
         case "period":
             NotificationCenter.default.post(name: periodNotification, object: argument)
         case "budgeteditor":
