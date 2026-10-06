@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import SquishCore
 import SwiftUI
 
 /// Lets a script drive the window and save pictures of it, for checking the UI without
@@ -14,6 +15,8 @@ import SwiftUI
 ///   remove           opens the removal confirmation for the selection
 ///   unpriced         toggles the Costs page's unpriced-models popover
 ///   period <today|week|month|all>   selects the Costs page's period
+///   budget <amount> <today|week|month>   sets the spending limit; "budget none" removes it
+///   budgeteditor     toggles the Costs page's budget popover
 ///   previewalert     shows the compact alert in the notch, as the Preview button does
 ///   quitcommand      what the app menu's Quit Squish (⌘Q) does
 ///   open             what the menu bar item's Open Squish does
@@ -31,6 +34,7 @@ enum DebugSnapshots {
     static let removeNotification = Notification.Name("squish.debug.remove")
     static let unpricedNotification = Notification.Name("squish.debug.unpriced")
     static let periodNotification = Notification.Name("squish.debug.period")
+    static let budgetEditorNotification = Notification.Name("squish.debug.budgetEditor")
 
     private static var handled = 0
     private static var timer: Timer?
@@ -75,6 +79,15 @@ enum DebugSnapshots {
             appState.previewAlert()
         case "period":
             NotificationCenter.default.post(name: periodNotification, object: argument)
+        case "budgeteditor":
+            NotificationCenter.default.post(name: budgetEditorNotification, object: nil)
+        case "budget":
+            let parts = argument.split(separator: " ").map(String.init)
+            if parts.count == 2, let amount = Double(parts[0]), let period = CostPeriod(rawValue: parts[1]) {
+                appState.budget = SpendBudget(amount: amount, period: period)
+            } else {
+                appState.budget = nil
+            }
         case "quitcommand":
             lifecycle.quitCommand()
         case "open":
@@ -90,7 +103,7 @@ enum DebugSnapshots {
             // The Settings scene only opens while the app is active, which a terminal launch on
             // a locked screen never is; host the same view in a plain window to check its layout.
             let window = NSWindow(contentViewController: NSHostingController(
-                rootView: GeneralSettingsView().environmentObject(lifecycle)
+                rootView: GeneralSettingsView().environmentObject(lifecycle).environmentObject(appState)
             ))
             window.title = "Settings"
             window.orderFrontRegardless()

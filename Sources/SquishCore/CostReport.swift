@@ -1,7 +1,7 @@
 import Foundation
 
 /// The span the Costs page reports on. Calendar periods, so a month matches a provider's bill.
-public enum CostPeriod: String, CaseIterable, Identifiable, Sendable {
+public enum CostPeriod: String, CaseIterable, Codable, Identifiable, Sendable {
     case today
     case week
     case month

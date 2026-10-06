@@ -26,6 +26,27 @@ public enum HookSettings {
         public static let permissionRequest = Registration(event: "PermissionRequest", matcher: "*", timeout: 310)
         /// Gemini CLI (`~/.gemini/settings.json`): fires when a tool waits for permission.
         public static let geminiNotification = Registration(event: "Notification", matcher: nil, timeout: 5_000)
+
+        /// Claude Code: the turn finished. No matcher, as Claude documents for this event.
+        public static let claudeStop = Registration(event: "Stop", matcher: nil, timeout: 10)
+        /// Claude Code: waiting for the user, filtered to the two kinds that mean that.
+        public static let claudeNotification = Registration(
+            event: "Notification", matcher: "permission_prompt|idle_prompt", timeout: 10
+        )
+        /// Codex: the turn finished.
+        public static let codexStop = Registration(event: "Stop", matcher: "*", timeout: 10)
+        /// Gemini CLI: the agent loop ended.
+        public static let geminiAfterAgent = Registration(event: "AfterAgent", matcher: nil, timeout: 5_000)
+
+        /// Every registration Squish has ever used for a provider, so a sync can remove the
+        /// ones a feature no longer wants.
+        public static func all(for provider: AgentProvider) -> [Registration] {
+            switch provider {
+            case .claude: [permissionRequest, claudeStop, claudeNotification]
+            case .codex: [permissionRequest, codexStop]
+            case .gemini: [geminiNotification, geminiAfterAgent]
+            }
+        }
     }
 
     private static let event = Registration.permissionRequest.event

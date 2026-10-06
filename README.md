@@ -14,6 +14,9 @@
 - **Keeps the totals.** A durable cost ledger preserves your spend after the agents delete their old logs. Completed days are frozen; today updates live.
 - **Warns before context compacts.** When a session's context passes your threshold (80% by default, adjustable from 50% to 95%), a dark Dynamic Island style alert drops from the top of the screen, with what compacting would cost at current prices and a button that sends `/compact` (`/compress` for Gemini) to the session's tab in Terminal or iTerm2, or copies it for other terminals. It re-arms once the session compacts below the threshold.
 - **Puts live chats in the notch.** Optionally, active sessions grow the notch sideways, and a Claude Code permission request or question drops it open so you can allow, deny or answer right there.
+- **Lives in the menu bar.** The menu bar item lists every live session with its status and context use; each one has Open in Terminal, Compact, and Allow or Deny when it waits on a permission.
+- **Tells you when to come back.** Optional notifications when a session finishes its turn or waits for your input, with what the agent said; clicking one opens the session's terminal.
+- **Keeps a budget.** Set a limit per day, week or month for the folder; the Costs page and the menu bar show how much of it is used, and Squish notifies you when the spend nears the limit and when it passes it.
 - **Cleans up worktrees.** Lists every linked git worktree of the repos in your folder with its age and size, flags the ones older than 14 days or larger than 1 GB (both adjustable), and removes them with `git worktree remove`, keeping the branch. Worktrees with uncommitted or unpushed work need a second confirmation that says what would be lost.
 
 ## Install
@@ -28,19 +31,24 @@ Squish checks for updates automatically through [Sparkle](https://sparkle-projec
 2. **Read the costs.** Sessions appear newest first while older history indexes in the background. Each one shows its tokens, its estimated cost and how full its context is.
 3. **Set the alert threshold.** Under **Compact alerts**, choose when the notch alert fires, or preview it.
 4. **Turn on Live chats** if you want to answer Claude Code and Codex from the notch. Squish installs its hook (below); a preview button shows what a request looks like.
-5. **Leave it running.** Closing the window (`⌘W` or `⌘Q`) keeps Squish in the menu bar, without a Dock icon, where it goes on watching your sessions, so compact alerts and live chats work without the window. The menu bar icon shows how many sessions are active, reopens the window, and has the real **Quit Squish**. **Squish → Settings…** (`⌘,`) turns this off, so `⌘Q` quits, and can open Squish at login.
+5. **Turn on notifications** under **Squish → Settings…** (`⌘,`): when a session finishes, when one waits for input, or both. They use the same hook, so the agent itself reports it.
+6. **Set a budget** on the Costs page if you want one. It is a limit for the watched folder per day, week or month; nothing is blocked when it is passed.
+7. **Leave it running.** Closing the window (`⌘W` or `⌘Q`) keeps Squish in the menu bar, without a Dock icon, where it goes on watching your sessions, so compact alerts, live chats and notifications work without the window. The menu bar item lists the live sessions, each with Open in Terminal and Compact, shows the budget, reopens the window, and has the real **Quit Squish**. Settings turns the background mode off, so `⌘Q` quits, and can open Squish at login.
 
-## Live chats and the Claude Code hook
+Every session row in Costs and Compact Alerts has an Open in Terminal button. For sessions in Terminal or iTerm2 it selects the session's own tab; for other terminals it brings the app around the session forward.
+
+## Live chats, notifications and the hook
 
 With Live chats on, Claude Code and Codex permission prompts, and Claude Code `AskUserQuestion` questions, open the notch with one tab per waiting session. Approve or deny a tool, pick one of the offered answers, or type your own.
 
-- **One hook per agent, nothing else.** Squish adds a single `PermissionRequest` hook that runs `squish-hook`, a small program bundled inside the app, to `~/.claude/settings.json` and to `~/.codex/hooks.json` (and sets `hooks = true` under `[features]` in `~/.codex/config.toml`, which Codex needs to read hooks at all). It backs up each original file once (`*.squish-backup`), leaves your other hooks alone, and removes its entries when you turn Live chats off. Agents whose folder does not exist are skipped.
+- **One hook program, a few events.** Squish adds hooks that run `squish-hook`, a small program bundled inside the app, to `~/.claude/settings.json` and to `~/.codex/hooks.json` (and sets `hooks = true` under `[features]` in `~/.codex/config.toml`, which Codex needs to read hooks at all). Live chats registers `PermissionRequest`; notifications register `Stop` (the turn finished) and, for Claude Code, `Notification` for its `permission_prompt` and `idle_prompt` kinds (waiting). Squish backs up each original file once (`*.squish-backup`), leaves your other hooks alone, and removes an entry as soon as nothing needs it. Agents whose folder does not exist are skipped.
 - **Only real prompts.** `PermissionRequest` fires only when the agent would actually ask you, so tools your permission mode already allows never reach the notch.
 - **Never hangs a session.** The hook passes straight through to the agent's own prompt unless Squish is running and watching the session's folder, and falls back to that prompt after five minutes without an answer.
 - **No surprise permissions.** Allow and deny need nothing from macOS. Accessibility is requested only the first time you send an answer to a question, so Squish can type it into the terminal; without it, the answer is copied to the clipboard.
-- **Gemini CLI shows up as waiting.** Gemini's hooks cannot answer a permission prompt, so Squish adds a `Notification` hook to `~/.gemini/settings.json` that marks the session as waiting in the notch, with a button to open its folder; the answer itself goes in Gemini's terminal, and the notice clears once the session moves on.
+- **Gemini CLI shows up as waiting.** Gemini's hooks cannot answer a permission prompt, so Squish adds a `Notification` hook to `~/.gemini/settings.json` that marks the session as waiting in the notch, with a button to open its terminal; the answer itself goes in Gemini's terminal, and the notice clears once the session moves on. Notifications add `AfterAgent` for the finished turn.
+- **Notifications say what happened.** A finished notification carries the end of the agent's last message; a waiting one carries the prompt. One prompt reported by two hooks makes one notification, and it is taken back once the prompt is answered from the notch or the menu bar.
 
-Turn Live chats off before deleting Squish, so the hook entries are removed.
+Turn Live chats and notifications off before deleting Squish, so the hook entries are removed.
 
 ## Where it looks
 

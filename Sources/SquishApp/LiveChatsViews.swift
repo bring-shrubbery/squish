@@ -176,6 +176,10 @@ private struct LiveChatRow: View {
                         .foregroundStyle(.white.opacity(0.45))
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { model.onOpenTerminal?(chat) }
+            .help("Open in Terminal")
 
             Spacer(minLength: 6)
 

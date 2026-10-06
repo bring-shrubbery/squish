@@ -8,6 +8,7 @@ struct CostDashboardView: View {
     @EnvironmentObject private var appState: AppState
     @State private var period = CostPeriod.month
     @State private var isShowingUnpriced = false
+    @State private var isEditingBudget = false
 
     var body: some View {
         let report = CostReport(entries: appState.costEntries, period: period)
@@ -45,6 +46,12 @@ struct CostDashboardView: View {
             }
 
             SettingsGroup {
+                BudgetRow(status: appState.budgetStatus, isEditing: $isEditingBudget)
+            } header: {
+                Text("Budget")
+            }
+
+            SettingsGroup {
                 if report.dailyCosts.isEmpty {
                     Text(report.entries.isEmpty ? "Usage appears after a session is detected." : "No spend \(periodPhrase).")
                         .foregroundStyle(.secondary)
@@ -75,7 +82,8 @@ struct CostDashboardView: View {
                                 session: entry.session,
                                 cost: entry.cost,
                                 periodCost: period == .all ? nil : report.periodCostByEntryID[entry.id],
-                                isArchived: !liveSessionIDs.contains(entry.id)
+                                isArchived: !liveSessionIDs.contains(entry.id),
+                                onOpen: { appState.reveal(entry.session) }
                             )
                             .equatable()
                             if entry.id != report.entries.last?.id {
@@ -137,6 +145,9 @@ struct CostDashboardView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: DebugSnapshots.periodNotification)) { notification in
             if let raw = notification.object as? String, let next = CostPeriod(rawValue: raw) { period = next }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DebugSnapshots.budgetEditorNotification)) { _ in
+            isEditingBudget.toggle()
         }
         #endif
     }
@@ -370,12 +381,136 @@ private struct Stat: View {
     }
 }
 
+/// The budget against the period's spend, or the invitation to set one. The editor is a
+/// popover on the button.
+private struct BudgetRow: View {
+    @EnvironmentObject private var appState: AppState
+    let status: BudgetStatus?
+    @Binding var isEditing: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let status {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.summary)
+                        .monospacedDigit()
+                    Text(detail(status))
+                        .font(.caption)
+                        .foregroundStyle(status.level == .ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint(status)))
+                }
+                Spacer(minLength: 12)
+                ProgressView(value: min(status.fraction, 1))
+                    .tint(tint(status))
+                    .frame(width: 200)
+                Text("\(Int((status.fraction * 100).rounded()))%")
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, alignment: .trailing)
+                    .fixedSize()
+            } else {
+                Text("No budget set.")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+            }
+            Button(status == nil ? "Set Budget…" : "Change…") { isEditing.toggle() }
+                .controlSize(.small)
+                .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+                    BudgetEditor(budget: appState.budget) { budget in
+                        appState.budget = budget
+                        isEditing = false
+                    }
+                }
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// "$58.00 left this month", "Nearly at the limit", "Over by $12.00".
+    private func detail(_ status: BudgetStatus) -> String {
+        switch status.level {
+        case .over: "Over by \(currency(status.spent - status.budget.amount))"
+        case .near: "Nearly at the limit, \(currency(status.remaining)) left \(status.budget.periodPhrase)"
+        case .ok: "\(currency(status.remaining)) left \(status.budget.periodPhrase)"
+        }
+    }
+
+    private func tint(_ status: BudgetStatus) -> Color {
+        switch status.level {
+        case .over: .red
+        case .near: .orange
+        case .ok: .accentColor
+        }
+    }
+}
+
+/// Amount and period for the budget, with Remove for an existing one.
+private struct BudgetEditor: View {
+    let onSave: (SpendBudget?) -> Void
+    @State private var amount: Double
+    @State private var period: CostPeriod
+    private let hadBudget: Bool
+
+    init(budget: SpendBudget?, onSave: @escaping (SpendBudget?) -> Void) {
+        self.onSave = onSave
+        _amount = State(initialValue: budget?.amount ?? 100)
+        _period = State(initialValue: budget?.period ?? .month)
+        hadBudget = budget != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(hadBudget ? "Change Budget" : "Set a Budget")
+                .font(.headline)
+            Form {
+                LabeledContent("Limit") {
+                    HStack(spacing: 4) {
+                        Text("$")
+                            .foregroundStyle(.secondary)
+                        TextField("Limit", value: $amount, format: .number.precision(.fractionLength(0...2)))
+                            .labelsHidden()
+                            .frame(width: 90)
+                    }
+                }
+                Picker("Per", selection: $period) {
+                    Text("Day").tag(CostPeriod.today)
+                    Text("Week").tag(CostPeriod.week)
+                    Text("Month").tag(CostPeriod.month)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+            }
+            .formStyle(.columns)
+            Text("Squish notifies you when the folder's spend nears the limit and when it passes it. Nothing is blocked.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if hadBudget {
+                    Button("Remove", role: .destructive) { onSave(nil) }
+                }
+                Spacer()
+                Button("Save") { onSave(SpendBudget(amount: amount, period: period)) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(amount <= 0)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+}
+
 private struct SessionCostRow: View, Equatable {
     let session: CodingSession
     let cost: CostBreakdown?
     /// The part of the cost that falls in the selected period; nil for all time.
     let periodCost: CostBreakdown?
     let isArchived: Bool
+    /// Brings the session's terminal forward; only offered while the session is live.
+    let onOpen: () -> Void
+
+    static func == (lhs: SessionCostRow, rhs: SessionCostRow) -> Bool {
+        lhs.session == rhs.session && lhs.cost == rhs.cost && lhs.periodCost == rhs.periodCost && lhs.isArchived == rhs.isArchived
+    }
 
     private var details: String {
         var parts = [session.provider.displayName, session.model, session.projectName]
@@ -396,6 +531,14 @@ private struct SessionCostRow: View, Equatable {
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
+            if !isArchived {
+                Button(action: onOpen) {
+                    Image(systemName: "terminal")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Open in Terminal")
+            }
             VStack(alignment: .trailing, spacing: 2) {
                 if let cost {
                     if let periodCost, abs(periodCost.total - cost.total) >= 0.005 {
@@ -416,6 +559,14 @@ private struct SessionCostRow: View, Equatable {
             }
         }
         .padding(.vertical, 8)
+        .contextMenu {
+            if !isArchived {
+                Button("Open in Terminal", action: onOpen)
+            }
+            Button("Show Log in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.logPath)])
+            }
+        }
     }
 }
 
@@ -490,7 +641,13 @@ private struct UnpricedModelsPopover: View {
 
 func currency(_ amount: Double) -> String {
     if amount > 0 && amount < 0.01 { return String(format: "$%.4f", amount) }
-    return String(format: "$%.2f", amount)
+    if amount < 1000 { return String(format: "$%.2f", amount) }
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.numberStyle = .decimal
+    formatter.minimumFractionDigits = 2
+    formatter.maximumFractionDigits = 2
+    return "$" + (formatter.string(from: NSNumber(value: amount)) ?? String(format: "%.2f", amount))
 }
 
 func compactTokenCount(_ count: Int) -> String {

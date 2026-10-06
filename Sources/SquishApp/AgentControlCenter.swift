@@ -3,10 +3,14 @@ import Foundation
 import SquishCore
 
 /// Owns the live interactive path: watches the request spool, keeps the heartbeat
-/// fresh so the hook knows Squish is listening, and resolves pending requests.
+/// fresh so the hook knows Squish is listening, resolves pending requests, and hands
+/// one-way events (finished, waiting) on as they arrive.
 @MainActor
 final class AgentControlCenter: ObservableObject {
     @Published private(set) var pendingRequests: [PendingRequest] = []
+
+    /// Each event inside the monitored folder, once, in order; the file is gone by then.
+    var onEvent: ((AgentEvent) -> Void)?
 
     private let spool: RequestSpool
     private var monitor: FileSystemEventMonitor?
@@ -24,9 +28,11 @@ final class AgentControlCenter: ObservableObject {
 
         try? spool.ensureDirectories()
         spool.cleanupStale(olderThan: RequestSpool.staleRequestAge)
+        // Events written while nothing was listening are old news; only the recent ones count.
+        spool.cleanupStaleEvents(olderThan: 60)
         writeHeartbeat()
 
-        let monitor = FileSystemEventMonitor(paths: [spool.requestsDirectory]) { [weak self] _ in
+        let monitor = FileSystemEventMonitor(paths: [spool.requestsDirectory, spool.eventsDirectory]) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reload() }
         }
         monitor.start()
@@ -89,12 +95,20 @@ final class AgentControlCenter: ObservableObject {
     private func reload() {
         let root = monitoredRoot?.standardizedFileURL.resolvingSymlinksInPath().path
         let all = spool.pendingRequests()
-        let scoped = all.filter { request in
-            guard let root else { return true }
-            let cwd = URL(fileURLWithPath: request.cwd).standardizedFileURL.resolvingSymlinksInPath().path
-            return cwd == root || cwd.hasPrefix(root.hasSuffix("/") ? root : root + "/")
-        }
+        let scoped = all.filter { isInside(root, $0.cwd) }
         if scoped != pendingRequests { pendingRequests = scoped }
+
+        for event in spool.pendingEvents() {
+            spool.clearEvent(id: event.id)
+            guard isInside(root, event.cwd) else { continue }
+            onEvent?(event)
+        }
+    }
+
+    private func isInside(_ root: String?, _ path: String) -> Bool {
+        guard let root else { return true }
+        let cwd = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        return cwd == root || cwd.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
     private func writeHeartbeat() {

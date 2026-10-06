@@ -82,3 +82,62 @@ final class RequestSpoolTests: XCTestCase {
         XCTAssertNil(spool.readHeartbeat())
     }
 }
+
+final class AgentEventSpoolTests: XCTestCase {
+    private var roots: [URL] = []
+
+    override func tearDown() {
+        for root in roots { try? FileManager.default.removeItem(at: root) }
+        roots = []
+        super.tearDown()
+    }
+
+    private func tempSpool() throws -> RequestSpool {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("squish-spool-\(UUID().uuidString)")
+        roots.append(dir)
+        let spool = RequestSpool(root: dir)
+        try spool.ensureDirectories()
+        return spool
+    }
+
+    private func event(_ id: String, kind: AgentEvent.Kind = .finished, createdAt: Date = Date()) -> AgentEvent {
+        AgentEvent(id: id, sessionId: "codex:s", cwd: "/tmp/p", kind: kind, message: "done",
+                   tty: "/dev/ttys001", pid: 1, ppid: 2, createdAt: createdAt)
+    }
+
+    func testEventsRoundTripOldestFirstAndClear() throws {
+        let spool = try tempSpool()
+        let now = Date(timeIntervalSince1970: 10_000)
+        try spool.writeEvent(event("later", createdAt: now.addingTimeInterval(5)))
+        try spool.writeEvent(event("first", kind: .waiting, createdAt: now))
+        let events = spool.pendingEvents()
+        XCTAssertEqual(events.map(\.id), ["first", "later"])
+        XCTAssertEqual(events.first?.kind, .waiting)
+        XCTAssertEqual(events.first?.provider, .codex)
+        XCTAssertEqual(events.first?.message, "done")
+        spool.clearEvent(id: "first")
+        XCTAssertEqual(spool.pendingEvents().map(\.id), ["later"])
+    }
+
+    func testStaleEventsAreSweptAndGarbageDropped() throws {
+        let spool = try tempSpool()
+        let now = Date(timeIntervalSince1970: 10_000)
+        try spool.writeEvent(event("old", createdAt: now.addingTimeInterval(-1000)))
+        try spool.writeEvent(event("new", createdAt: now.addingTimeInterval(-10)))
+        try Data("not json".utf8).write(to: spool.eventsDirectory.appendingPathComponent("junk.json"))
+        spool.cleanupStaleEvents(olderThan: 600, now: now)
+        XCTAssertEqual(spool.pendingEvents().map(\.id), ["new"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: spool.eventsDirectory.appendingPathComponent("junk.json").path))
+    }
+
+    func testExcerptCollapsesWhitespaceAndCuts() {
+        XCTAssertNil(AgentEvent.excerpt(nil))
+        XCTAssertNil(AgentEvent.excerpt("  \n "))
+        XCTAssertEqual(AgentEvent.excerpt("Done.\n\nAll  tests pass."), "Done. All tests pass.")
+        let long = String(repeating: "word ", count: 60)
+        let cut = AgentEvent.excerpt(long, limit: 40)!
+        XCTAssertTrue(cut.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(cut.count, 40)
+    }
+}

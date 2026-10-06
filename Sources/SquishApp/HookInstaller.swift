@@ -5,16 +5,27 @@ import SquishCore
 /// Installs and removes Squish's hook in each agent's settings, and manages the
 /// Accessibility permission the keystroke write-path needs.
 ///
-/// - Claude Code: `~/.claude/settings.json`, a `PermissionRequest` hook.
-/// - Codex: `~/.codex/hooks.json`, the same hook, plus `hooks = true` under `[features]` in
-///   `~/.codex/config.toml`, which Codex needs before it reads hooks at all.
-/// - Gemini CLI: `~/.gemini/settings.json`, a `Notification` hook that only reports waiting.
+/// - Claude Code: `~/.claude/settings.json`: `PermissionRequest` for live chats; `Stop` and
+///   `Notification` for notifications.
+/// - Codex: `~/.codex/hooks.json`: `PermissionRequest` and `Stop`, plus `hooks = true`
+///   under `[features]` in `~/.codex/config.toml`, which Codex needs before it reads hooks.
+/// - Gemini CLI: `~/.gemini/settings.json`: `Notification`, which only reports waiting, for
+///   either feature; `AfterAgent` for notifications.
 ///
-/// All settings mutation goes through the pure `HookSettings` merge, so a malformed or
-/// unexpected file is never clobbered: it is backed up first and only the Squish hook block
-/// is added or removed. An agent whose folder does not exist is left alone.
+/// Each feature wants some registrations; `sync` makes every present agent's file carry
+/// exactly the union. All settings mutation goes through the pure `HookSettings` merge, so a
+/// malformed or unexpected file is never clobbered: it is backed up first and only the
+/// Squish hook blocks are added or removed. An agent whose folder does not exist is left alone.
 @MainActor
 final class HookInstaller {
+    /// What the hook is installed for.
+    enum Feature: Hashable {
+        /// Permission prompts and questions answered from the notch.
+        case liveChats
+        /// Finished and waiting notifications.
+        case notifications
+    }
+
     enum Status: Equatable {
         case installed
         case notInstalled
@@ -28,7 +39,23 @@ final class HookInstaller {
     private struct Target {
         let provider: AgentProvider
         let settingsURL: URL
-        let registration: HookSettings.Registration
+    }
+
+    /// The registrations a provider's file should carry for these features.
+    static func registrations(for provider: AgentProvider, features: Set<Feature>) -> [HookSettings.Registration] {
+        var result: [HookSettings.Registration] = []
+        switch provider {
+        case .claude:
+            if features.contains(.liveChats) { result.append(.permissionRequest) }
+            if features.contains(.notifications) { result += [.claudeStop, .claudeNotification] }
+        case .codex:
+            if features.contains(.liveChats) { result.append(.permissionRequest) }
+            if features.contains(.notifications) { result.append(.codexStop) }
+        case .gemini:
+            if !features.isEmpty { result.append(.geminiNotification) }
+            if features.contains(.notifications) { result.append(.geminiAfterAgent) }
+        }
+        return result
     }
 
     private let targets: [Target]
@@ -38,21 +65,9 @@ final class HookInstaller {
     init(settingsURL: URL? = nil, codexHooksURL: URL? = nil, codexConfigURL: URL? = nil, geminiSettingsURL: URL? = nil) {
         let home = FileManager.default.homeDirectoryForCurrentUser
         targets = [
-            Target(
-                provider: .claude,
-                settingsURL: settingsURL ?? home.appendingPathComponent(".claude/settings.json"),
-                registration: .permissionRequest
-            ),
-            Target(
-                provider: .codex,
-                settingsURL: codexHooksURL ?? home.appendingPathComponent(".codex/hooks.json"),
-                registration: .permissionRequest
-            ),
-            Target(
-                provider: .gemini,
-                settingsURL: geminiSettingsURL ?? home.appendingPathComponent(".gemini/settings.json"),
-                registration: .geminiNotification
-            )
+            Target(provider: .claude, settingsURL: settingsURL ?? home.appendingPathComponent(".claude/settings.json")),
+            Target(provider: .codex, settingsURL: codexHooksURL ?? home.appendingPathComponent(".codex/hooks.json")),
+            Target(provider: .gemini, settingsURL: geminiSettingsURL ?? home.appendingPathComponent(".gemini/settings.json"))
         ]
         self.codexConfigURL = codexConfigURL ?? home.appendingPathComponent(".codex/config.toml")
     }
@@ -67,14 +82,20 @@ final class HookInstaller {
         return base.appendingPathComponent("squish-hook").path
     }
 
+    /// Whether the live-chats hook is in Claude Code's settings.
     func isInstalled() -> Bool {
-        status(for: .claude) == .installed
+        status(for: .claude, features: [.liveChats]) == .installed
     }
 
-    func status(for provider: AgentProvider) -> Status {
+    /// Whether the provider's file carries everything `features` want.
+    func status(for provider: AgentProvider, features: Set<Feature>) -> Status {
         guard let target = targets.first(where: { $0.provider == provider }) else { return .agentNotFound }
         guard agentIsPresent(target) else { return .agentNotFound }
-        guard HookSettings.installed(in: loadSettings(target.settingsURL), command: hookCommandPath(), registration: target.registration) else {
+        let wanted = Self.registrations(for: provider, features: features)
+        guard !wanted.isEmpty else { return .notInstalled }
+        let settings = loadSettings(target.settingsURL)
+        let command = hookCommandPath()
+        guard wanted.allSatisfy({ HookSettings.installed(in: settings, command: command, registration: $0) }) else {
             return .notInstalled
         }
         if provider == .codex, let codexConfigURL,
@@ -85,17 +106,32 @@ final class HookInstaller {
         return .installed
     }
 
-    /// Installs the hook for every agent present. Throws the first write error after trying
-    /// them all, so one agent's broken file does not block the others.
-    func install() throws {
+    /// Makes every present agent's file carry exactly the registrations `features` want,
+    /// removing the rest. With no features, every Squish hook goes. Throws the first write
+    /// error after trying them all, so one agent's broken file does not block the others.
+    func sync(features: Set<Feature>) throws {
         var firstError: Error?
-        for target in targets where agentIsPresent(target) {
+        let command = hookCommandPath()
+        for target in targets {
+            let wanted = Self.registrations(for: target.provider, features: features)
+            // An absent agent is left alone, unless its file still has our hooks to remove.
+            let fileExists = FileManager.default.fileExists(atPath: target.settingsURL.path)
+            guard agentIsPresent(target) || (fileExists && wanted.isEmpty) else { continue }
+            if wanted.isEmpty && !fileExists { continue }
             do {
                 let current = loadSettings(target.settingsURL)
-                backupIfNeeded(target.settingsURL)
-                let updated = HookSettings.installing(hookCommandPath(), into: current, registration: target.registration)
-                try writeSettings(updated, to: target.settingsURL)
-                if target.provider == .codex { try enableCodexHooks() }
+                var updated = current
+                for registration in HookSettings.Registration.all(for: target.provider) where !wanted.contains(registration) {
+                    updated = HookSettings.removing(command, from: updated, registration: registration)
+                }
+                for registration in wanted {
+                    updated = HookSettings.installing(command, into: updated, registration: registration)
+                }
+                if !Self.equal(updated, current) {
+                    backupIfNeeded(target.settingsURL)
+                    try writeSettings(updated, to: target.settingsURL)
+                }
+                if target.provider == .codex, !wanted.isEmpty { try enableCodexHooks() }
             } catch {
                 firstError = firstError ?? error
             }
@@ -103,18 +139,10 @@ final class HookInstaller {
         if let firstError { throw firstError }
     }
 
-    func uninstall() throws {
-        var firstError: Error?
-        for target in targets where FileManager.default.fileExists(atPath: target.settingsURL.path) {
-            do {
-                let current = loadSettings(target.settingsURL)
-                let updated = HookSettings.removing(hookCommandPath(), from: current, registration: target.registration)
-                try writeSettings(updated, to: target.settingsURL)
-            } catch {
-                firstError = firstError ?? error
-            }
-        }
-        if let firstError { throw firstError }
+    private static func equal(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
+        guard let a = try? JSONSerialization.data(withJSONObject: lhs, options: [.sortedKeys]),
+              let b = try? JSONSerialization.data(withJSONObject: rhs, options: [.sortedKeys]) else { return false }
+        return a == b
     }
 
     // MARK: - Accessibility

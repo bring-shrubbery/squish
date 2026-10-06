@@ -10,7 +10,10 @@ import SquishCore
 //
 // Claude Code and Codex send `PermissionRequest`, which takes an allow/deny answer. Gemini
 // CLI sends `Notification` when a tool waits for permission; it takes no answer, so the
-// hook only records that the session is waiting and returns at once.
+// hook only records that the session is waiting and returns at once. `Stop` (Claude Code,
+// Codex) and `AfterAgent` (Gemini CLI) mean the turn finished, and Claude Code's
+// `Notification` means it is waiting for the user; those become events Squish turns into
+// notifications, and the hook returns at once.
 
 let spool = RequestSpool(root: RequestSpool.defaultRoot)
 
@@ -41,6 +44,12 @@ case (.claude, ClaudeHookResponse.eventName), (.codex, ClaudeHookResponse.eventN
     handlePermissionRequest()
 case (.gemini, "Notification"):
     handleGeminiNotification()
+case (.claude, "Stop"), (.codex, "Stop"):
+    handleStop(message: input["last_assistant_message"] as? String)
+case (.gemini, "AfterAgent"):
+    handleStop(message: input["prompt_response"] as? String)
+case (.claude, "Notification"):
+    handleClaudeNotification()
 default:
     // Any other event (a stale PreToolUse registration from an older install, for
     // example) must never intercept an auto-approved tool.
@@ -114,6 +123,39 @@ func handleGeminiNotification() -> Never {
     try? spool.ensureDirectories()
     try? spool.writeRequest(request)
     passthrough()
+}
+
+/// The turn finished: tell Squish and get out of the agent's way. A subagent's stop is its
+/// parent's business, not the user's.
+func handleStop(message: String?) -> Never {
+    guard input["agent_id"] == nil else { passthrough() }
+    writeEvent(kind: .finished, message: message)
+    passthrough()
+}
+
+/// Claude Code is waiting: for a permission (which the PermissionRequest hook may already
+/// be showing in the notch; Squish folds the two together) or for the next prompt.
+func handleClaudeNotification() -> Never {
+    let type = (input["notification_type"] as? String) ?? ""
+    guard type == "permission_prompt" || type == "idle_prompt" else { passthrough() }
+    writeEvent(kind: .waiting, message: input["message"] as? String)
+    passthrough()
+}
+
+func writeEvent(kind: AgentEvent.Kind, message: String?) {
+    let event = AgentEvent(
+        id: UUID().uuidString,
+        sessionId: sessionId,
+        cwd: cwd,
+        kind: kind,
+        message: AgentEvent.excerpt(message),
+        tty: currentTTY(),
+        pid: Int(getpid()),
+        ppid: Int(getppid()),
+        createdAt: Date()
+    )
+    try? spool.ensureDirectories()
+    try? spool.writeEvent(event)
 }
 
 // MARK: - Helpers

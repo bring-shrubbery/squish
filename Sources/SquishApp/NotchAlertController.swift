@@ -18,7 +18,7 @@ final class NotchAlertController {
     /// Called once the alert has fully hidden and nothing is replacing it.
     var onDidHide: (() -> Void)?
     /// The alert's Compact button: sends the command to the session's terminal.
-    var onCompact: ((CodingSession) -> CompactionSender.Delivery)?
+    var onCompact: ((CodingSession) -> TerminalBridge.Delivery)?
 
     private init() {}
 
@@ -66,8 +66,8 @@ private struct NotchAlertView: View {
     let session: CodingSession
     let threshold: Double
     let isPreview: Bool
-    let onCompact: ((CodingSession) -> CompactionSender.Delivery)?
-    @State private var delivery: CompactionSender.Delivery?
+    let onCompact: ((CodingSession) -> TerminalBridge.Delivery)?
+    @State private var delivery: TerminalBridge.Delivery?
 
     var body: some View {
         HStack(spacing: 14) {

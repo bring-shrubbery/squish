@@ -42,6 +42,52 @@ public struct AgentProcess: Equatable, Sendable {
     }
 }
 
+/// What the kernel says about a process, for walking up from an agent to the app around it.
+public enum ProcessTree {
+    public struct Info: Equatable, Sendable {
+        public let pid: pid_t
+        public let parent: pid_t
+        /// The executable's short name (`claude`, `zsh`, `Terminal`).
+        public let name: String
+        /// `/dev/ttys003`, or nil when the process has no controlling terminal.
+        public let tty: String?
+        public let startedAt: Date
+    }
+
+    public static func info(of pid: pid_t) -> Info? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        let name = withUnsafeBytes(of: &info.pbi_comm) { buffer -> String in
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            let length = bytes.firstIndex(of: 0) ?? bytes.count
+            return String(decoding: UnsafeBufferPointer(rebasing: bytes[..<length]), as: UTF8.self)
+        }
+        // NODEV (all ones) means no controlling terminal.
+        let tty: String? = info.e_tdev == UInt32.max
+            ? nil
+            : devname(dev_t(bitPattern: info.e_tdev), S_IFCHR).map { "/dev/" + String(cString: $0) }
+        return Info(
+            pid: pid,
+            parent: pid_t(info.pbi_ppid),
+            name: name,
+            tty: tty,
+            startedAt: Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec))
+        )
+    }
+
+    /// The process's ancestors, nearest first, stopping before launchd. At most `limit`.
+    public static func ancestors(of pid: pid_t, limit: Int = 12) -> [pid_t] {
+        var result: [pid_t] = []
+        var current = pid
+        while result.count < limit, let info = info(of: current), info.parent > 1 {
+            result.append(info.parent)
+            current = info.parent
+        }
+        return result
+    }
+}
+
 /// Finds the process behind a session, so a command can be sent to its terminal. Sessions do
 /// not record their process, so this matches on the agent, the working directory and, when
 /// several qualify, the start time nearest the session's.
@@ -71,28 +117,22 @@ public enum AgentProcesses {
     public static func running() -> [AgentProcess] {
         allPids().compactMap { pid -> AgentProcess? in
             guard pid > 0, pid != getpid() else { return nil }
-            var info = proc_bsdinfo()
-            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-            let name = withUnsafeBytes(of: &info.pbi_comm) { buffer -> String in
-                let bytes = buffer.bindMemory(to: UInt8.self)
-                let length = bytes.firstIndex(of: 0) ?? bytes.count
-                return String(decoding: UnsafeBufferPointer(rebasing: bytes[..<length]), as: UTF8.self)
-            }
-            guard let provider = provider(forExecutable: name),
-                  let cwd = workingDirectory(of: pid) else { return nil }
-            // NODEV (all ones) means no controlling terminal.
-            let tty: String? = info.e_tdev == UInt32.max
-                ? nil
-                : devname(dev_t(bitPattern: info.e_tdev), S_IFCHR).map { "/dev/" + String(cString: $0) }
-            return AgentProcess(
-                pid: pid,
-                provider: provider,
-                workingDirectory: cwd,
-                tty: tty,
-                startedAt: Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec))
-            )
+            return process(pid: pid)
         }
+    }
+
+    /// The agent process with this pid, or nil when it is gone or is not an agent.
+    public static func process(pid: pid_t) -> AgentProcess? {
+        guard let info = ProcessTree.info(of: pid),
+              let provider = provider(forExecutable: info.name),
+              let cwd = workingDirectory(of: pid) else { return nil }
+        return AgentProcess(
+            pid: pid,
+            provider: provider,
+            workingDirectory: cwd,
+            tty: info.tty,
+            startedAt: info.startedAt
+        )
     }
 
     private static func normalized(_ path: String) -> String {

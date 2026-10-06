@@ -1,3 +1,4 @@
+import AppKit
 import SquishCore
 import SwiftUI
 
@@ -128,7 +129,7 @@ private enum CompactSessionSort: String, CaseIterable, Identifiable {
 private struct SessionContextRow: View, Equatable {
     let session: CodingSession
     let threshold: Double
-    @State private var delivery: CompactionSender.Delivery?
+    @State private var delivery: TerminalBridge.Delivery?
 
     static func == (lhs: SessionContextRow, rhs: SessionContextRow) -> Bool {
         lhs.session == rhs.session && lhs.threshold == rhs.threshold
@@ -163,12 +164,20 @@ private struct SessionContextRow: View, Equatable {
             if isOver || isClose {
                 Button(delivery?.label ?? "Compact") {
                     guard delivery == nil else { return }
-                    delivery = CompactionSender.compact(session)
+                    delivery = TerminalBridge.compact(session)
                 }
                 .controlSize(.small)
                 .disabled(delivery != nil)
                 .help(estimate ?? "Send the compact command to the session's terminal")
             }
+            Button {
+                TerminalBridge.reveal(session)
+            } label: {
+                Image(systemName: "terminal")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Open in Terminal")
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 8) {
                     if isOver {
@@ -194,5 +203,12 @@ private struct SessionContextRow: View, Equatable {
             }
         }
         .padding(.vertical, 8)
+        .contextMenu {
+            Button("Open in Terminal") { TerminalBridge.reveal(session) }
+            Button("Compact") { delivery = TerminalBridge.compact(session) }
+            Button("Show Log in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.logPath)])
+            }
+        }
     }
 }

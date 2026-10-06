@@ -42,7 +42,9 @@ struct CompactAlertRecord: Identifiable {
 final class AppState: ObservableObject {
     @Published var projectRoot: URL?
     @Published var sessions: [CodingSession] = []
-    @Published private(set) var costEntries: [CostLedgerEntry] = []
+    @Published private(set) var costEntries: [CostLedgerEntry] = [] {
+        didSet { updateBudgetStatus() }
+    }
     /// Which pricing catalog is in use and when it was last checked.
     @Published private(set) var pricing: PricingUpdater.Status
     @Published var selectedSection: AppSection = .costs
@@ -54,26 +56,53 @@ final class AppState: ObservableObject {
         didSet { defaults.set(alertThreshold, forKey: Keys.alertThreshold) }
     }
     @Published private(set) var recentAlerts: [CompactAlertRecord] = []
-    /// Claude Code sessions waiting for an answer in the notch.
+    /// Sessions waiting for an answer, as the menu bar counts them.
     @Published private(set) var waitingRequestCount = 0
+    /// Sessions active in the last minute and a half, waiting ones first, for the menu bar.
+    @Published private(set) var liveChats: [LiveChat] = []
+    /// What the hooks are waiting on, for the menu bar's Allow and Deny.
+    @Published private(set) var pendingRequests: [PendingRequest] = []
     @Published var liveChatsEnabled: Bool {
         didSet {
             defaults.set(liveChatsEnabled, forKey: Keys.liveChatsEnabled)
-            applyLiveChatsState()
+            applyHookFeatures()
         }
     }
+    /// The spending limit for the watched folder, if one is set.
+    @Published var budget: SpendBudget? {
+        didSet {
+            if let budget {
+                defaults.set(budget.amount, forKey: Keys.budgetAmount)
+                defaults.set(budget.period.rawValue, forKey: Keys.budgetPeriod)
+                notifier.requestAuthorization()
+            } else {
+                defaults.removeObject(forKey: Keys.budgetAmount)
+                defaults.removeObject(forKey: Keys.budgetPeriod)
+            }
+            updateBudgetStatus()
+        }
+    }
+    @Published private(set) var budgetStatus: BudgetStatus?
 
     let hookInstaller = HookInstaller()
+    let notifier = SessionNotifier()
     private let pricingUpdater = PricingUpdater()
     private let controlCenter = AgentControlCenter()
     private let liveChatsNotch = LiveChatsNotchController()
-    private var liveChatsTimer: Timer?
+    private var liveActivityTimer: Timer?
     private var liveChatsCancellable: AnyCancellable?
 
     var liveChatsHookInstalled: Bool { hookInstaller.isInstalled() }
-    /// Sessions that wrote to their log in the last minute and a half, as the notch counts them.
-    var activeSessionCount: Int { LiveActivity.chats(sessions: sessions, pending: []).count }
+    var activeSessionCount: Int { liveChats.count }
     var liveChatsAccessibilityGranted: Bool { hookInstaller.accessibilityGranted }
+
+    /// What the hooks are installed for right now.
+    var hookFeatures: Set<HookInstaller.Feature> {
+        var features = Set<HookInstaller.Feature>()
+        if liveChatsEnabled { features.insert(.liveChats) }
+        if notifier.isEnabled { features.insert(.notifications) }
+        return features
+    }
 
     private enum Keys {
         static let bookmark = "selectedProjectBookmark"
@@ -81,6 +110,10 @@ final class AppState: ObservableObject {
         static let alertsEnabled = "compactAlertsEnabled"
         static let alertThreshold = "compactAlertThreshold"
         static let liveChatsEnabled = "liveChatsEnabled"
+        static let budgetAmount = "budgetAmount"
+        static let budgetPeriod = "budgetPeriod"
+        static let budgetAlertLevel = "budgetAlertLevel"
+        static let budgetAlertPeriodStart = "budgetAlertPeriodStart"
     }
 
     private let defaults: UserDefaults
@@ -105,31 +138,34 @@ final class AppState: ObservableObject {
         self.alertThreshold = storedThreshold > 0 ? storedThreshold : 0.8
         self.liveChatsEnabled = defaults.object(forKey: Keys.liveChatsEnabled) as? Bool ?? false
         self.pricing = pricingUpdater.status
+        if let period = defaults.string(forKey: Keys.budgetPeriod).flatMap(CostPeriod.init(rawValue:)) {
+            self.budget = SpendBudget(amount: defaults.double(forKey: Keys.budgetAmount), period: period)
+        }
 
         liveChatsNotch.configure(
             onResolve: { [weak self] request, decision in
-                if request.isDecidable {
-                    self?.controlCenter.resolve(request, with: decision)
-                } else {
-                    self?.controlCenter.dismiss(request)
-                }
+                self?.resolve(request, with: decision)
             },
             onOpenTerminal: { chat in
-                NSWorkspace.shared.open(URL(fileURLWithPath: chat.session.projectPath))
+                TerminalBridge.reveal(chat.session)
             }
         )
+        controlCenter.onEvent = { [weak self] event in self?.handle(event) }
+        notifier.onOpen = { [weak self] sessionId in self?.openSession(id: sessionId) }
+        notifier.onSettingsChange = { [weak self] in self?.applyHookFeatures() }
 
         // A compact alert temporarily replaces the live-chats notch instead of
         // overlaying it: hide live chats while the alert shows, restore it after.
         NotchAlertController.shared.onWillShow = { [weak self] in self?.liveChatsNotch.suspend() }
-        NotchAlertController.shared.onCompact = { CompactionSender.compact($0) }
+        NotchAlertController.shared.onCompact = { TerminalBridge.compact($0) }
         NotchAlertController.shared.onDidHide = { [weak self] in self?.liveChatsNotch.resume() }
 
         pricingUpdater.onCatalogChange = { [weak self] in self?.pricingCatalogDidChange() }
         pricingUpdater.start()
         pricing = pricingUpdater.status
         restoreFolder()
-        applyLiveChatsState()
+        applyHookFeatures()
+        startLiveActivityTimer()
     }
 
     /// A newer catalog is in use: re-price the ledger (every stored session, not only the
@@ -151,7 +187,7 @@ final class AppState: ObservableObject {
         eventRefreshTask?.cancel()
         costLedgerTask?.cancel()
         fileSystemMonitor?.stop()
-        liveChatsTimer?.invalidate()
+        liveActivityTimer?.invalidate()
         if scopedAccessStarted { scopedURL?.stopAccessingSecurityScopedResource() }
     }
 
@@ -170,7 +206,7 @@ final class AppState: ObservableObject {
     }
 
     func clearFolder() {
-        stopLiveChats()
+        stopControlCenter()
         stopMonitoring()
         let scanner = scanner
         Task.detached(priority: .background) { scanner.reset() }
@@ -217,51 +253,79 @@ final class AppState: ObservableObject {
             createdAt: Date()
         )
         controlCenter.injectPreview(request)
-        refreshLiveChats()
+        refreshLiveActivity()
     }
 
-    // MARK: - Live chats
+    // MARK: - Live chats and notifications
 
-    private func applyLiveChatsState() {
-        if liveChatsEnabled {
-            // Only the hook is needed to approve/deny permissions — no OS prompts.
-            // Accessibility is requested lazily, and only if the user ever sends a
-            // free-text answer (which needs the keystroke path).
-            try? hookInstaller.install()
-            guard let root = projectRoot else { return }
-            controlCenter.start(monitoredRoot: root)
-            startLiveChatsPump()
+    /// Answers a request from the notch or the menu bar; a request that can only be shown
+    /// (Gemini CLI) is dismissed instead.
+    func resolve(_ request: PendingRequest, with decision: AgentDecision) {
+        if request.isDecidable {
+            controlCenter.resolve(request, with: decision)
         } else {
-            stopLiveChats()
-            try? hookInstaller.uninstall()
+            controlCenter.dismiss(request)
+        }
+        notifier.clearWaiting(sessionId: request.sessionId)
+        refreshLiveActivity()
+    }
+
+    /// Brings the session's terminal forward.
+    @discardableResult
+    func reveal(_ session: CodingSession) -> TerminalBridge.Reveal {
+        TerminalBridge.reveal(session)
+    }
+
+    @discardableResult
+    func compact(_ session: CodingSession) -> TerminalBridge.Delivery {
+        TerminalBridge.compact(session)
+    }
+
+    /// A clicked notification: the session's terminal, or its folder when the session is gone.
+    private func openSession(id: String) {
+        if let session = sessions.first(where: { $0.id == id }) {
+            TerminalBridge.reveal(session)
+        } else if let root = projectRoot {
+            NSWorkspace.shared.activateFileViewerSelecting([root])
         }
     }
 
-    private func startLiveChatsPump() {
+    /// The hooks follow the features that need them; the control center runs for any of them,
+    /// since its heartbeat is what lets the hook speak to Squish at all.
+    private func applyHookFeatures() {
+        let features = hookFeatures
+        try? hookInstaller.sync(features: features)
+        guard !features.isEmpty, let root = projectRoot else {
+            stopControlCenter()
+            return
+        }
+        controlCenter.start(monitoredRoot: root)
         liveChatsCancellable = controlCenter.$pendingRequests
             .sink { [weak self] _ in
-                Task { @MainActor in self?.refreshLiveChats() }
+                Task { @MainActor in self?.refreshLiveActivity() }
             }
-        liveChatsTimer?.invalidate()
+        refreshLiveActivity()
+    }
+
+    private func startLiveActivityTimer() {
+        liveActivityTimer?.invalidate()
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshLiveChats() }
+            Task { @MainActor in self?.refreshLiveActivity() }
         }
         RunLoop.main.add(timer, forMode: .common)
-        liveChatsTimer = timer
-        refreshLiveChats()
+        liveActivityTimer = timer
+        refreshLiveActivity()
     }
 
-    private func stopLiveChats() {
-        liveChatsTimer?.invalidate()
-        liveChatsTimer = nil
+    private func stopControlCenter() {
         liveChatsCancellable = nil
         controlCenter.stop()
-        liveChatsNotch.update(chats: [], pending: [])
-        waitingRequestCount = 0
+        refreshLiveActivity()
     }
 
-    private func refreshLiveChats() {
-        guard liveChatsEnabled else { return }
+    /// Recomputes who is working, idle and waiting: on every scan, every two seconds (status
+    /// is a matter of time passing), and whenever the hooks write something.
+    private func refreshLiveActivity() {
         // A "waiting" notice from Gemini CLI has no answer channel; once the session's log
         // moves on, the user answered in the terminal, so the notice goes away by itself.
         for request in controlCenter.pendingRequests where !request.isDecidable {
@@ -272,9 +336,83 @@ final class AppState: ObservableObject {
         }
         let pending = controlCenter.pendingRequests
         let chats = LiveActivity.chats(sessions: sessions, pending: pending, now: Date())
-        liveChatsNotch.update(chats: chats, pending: pending)
+        if liveChatsEnabled {
+            liveChatsNotch.update(chats: chats, pending: pending)
+        } else {
+            liveChatsNotch.update(chats: [], pending: [])
+        }
+        if pending != pendingRequests {
+            notifyNewRequests(pending)
+            pendingRequests = pending
+        }
+        if chats != liveChats { liveChats = chats }
         let waiting = Set(pending.map(\.sessionId)).count
         if waiting != waitingRequestCount { waitingRequestCount = waiting }
+    }
+
+    /// New requests get a waiting notification; sessions with no request left get theirs
+    /// taken back.
+    private func notifyNewRequests(_ pending: [PendingRequest]) {
+        let known = Set(pendingRequests.map(\.id))
+        for request in pending where !known.contains(request.id) && !request.id.hasPrefix("preview-") {
+            let summary = request.kind == .question ? request.inputSummary : "\(request.toolName): \(request.inputSummary)"
+            notifier.sessionWaiting(
+                sessionId: request.sessionId,
+                provider: request.provider,
+                session: sessions.first { $0.id == request.sessionId },
+                folder: request.cwd,
+                summary: summary
+            )
+        }
+        let stillWaiting = Set(pending.map(\.sessionId))
+        for sessionId in Set(pendingRequests.map(\.sessionId)) where !stillWaiting.contains(sessionId) {
+            notifier.clearWaiting(sessionId: sessionId)
+        }
+    }
+
+    /// Finished and waiting events from the hooks. A waiting event for a session whose
+    /// request is already pending says nothing new.
+    private func handle(_ event: AgentEvent) {
+        let session = sessions.first { $0.id == event.sessionId }
+        switch event.kind {
+        case .finished:
+            notifier.sessionFinished(event, session: session)
+        case .waiting:
+            guard !controlCenter.pendingRequests.contains(where: { $0.sessionId == event.sessionId }) else { return }
+            notifier.sessionWaiting(
+                sessionId: event.sessionId,
+                provider: event.provider,
+                session: session,
+                folder: event.cwd,
+                summary: event.message ?? "Waiting for your input."
+            )
+        }
+    }
+
+    // MARK: - Budget
+
+    /// Recomputed whenever the ledger or the budget changes; says so, once per period, when
+    /// the spend first nears and first passes the limit.
+    private func updateBudgetStatus() {
+        guard let budget, let status = BudgetStatus(budget: budget, entries: costEntries) else {
+            budgetStatus = nil
+            return
+        }
+        if status != budgetStatus { budgetStatus = status }
+
+        let periodStart = status.interval.start.timeIntervalSince1970
+        let samePeriod = defaults.double(forKey: Keys.budgetAlertPeriodStart) == periodStart
+        let previous = samePeriod ? BudgetStatus.Level(rawValue: defaults.integer(forKey: Keys.budgetAlertLevel)) : nil
+        guard let crossed = status.crossedLevel(since: previous) else {
+            if !samePeriod {
+                defaults.set(periodStart, forKey: Keys.budgetAlertPeriodStart)
+                defaults.set(BudgetStatus.Level.ok.rawValue, forKey: Keys.budgetAlertLevel)
+            }
+            return
+        }
+        defaults.set(periodStart, forKey: Keys.budgetAlertPeriodStart)
+        defaults.set(crossed.rawValue, forKey: Keys.budgetAlertLevel)
+        notifier.budgetCrossed(status, level: crossed, folder: projectRoot?.lastPathComponent ?? "Squish")
     }
 
     private func restoreFolder() {
@@ -328,11 +466,7 @@ final class AppState: ObservableObject {
         }
 
         startMonitoring(normalized)
-
-        if liveChatsEnabled {
-            controlCenter.start(monitoredRoot: normalized)
-            startLiveChatsPump()
-        }
+        applyHookFeatures()
     }
 
     private func startMonitoring(_ root: URL) {
@@ -462,7 +596,7 @@ final class AppState: ObservableObject {
             previousByID: previousByID,
             alertsMayFire: alertsMayFire
         )
-        refreshLiveChats()
+        refreshLiveActivity()
         guard let root = projectRoot else { return }
         mergeCostLedger(sessions: discovered, projectRoot: root)
     }

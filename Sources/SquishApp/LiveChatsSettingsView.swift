@@ -13,11 +13,11 @@ struct LiveChatsSettingsView: View {
                         .labelsHidden()
                 }
                 SettingsDivider()
-                HookRow(name: "Claude Code hook", status: appState.hookInstaller.status(for: .claude))
+                HookRow(name: "Claude Code hook", status: appState.hookInstaller.status(for: .claude, features: [.liveChats]))
                 SettingsDivider()
-                HookRow(name: "Codex hook", status: appState.hookInstaller.status(for: .codex))
+                HookRow(name: "Codex hook", status: appState.hookInstaller.status(for: .codex, features: [.liveChats]))
                 SettingsDivider()
-                HookRow(name: "Gemini CLI hook", status: appState.hookInstaller.status(for: .gemini))
+                HookRow(name: "Gemini CLI hook", status: appState.hookInstaller.status(for: .gemini, features: [.liveChats]))
                 SettingsDivider()
                 SettingsRow("Accessibility") {
                     HStack(spacing: 10) {

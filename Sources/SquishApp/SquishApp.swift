@@ -24,6 +24,7 @@ struct SquishApplication: App {
         Settings {
             GeneralSettingsView()
                 .environmentObject(lifecycle)
+                .environmentObject(appState)
         }
 
         MenuBarExtra(isInserted: menuBarItemIsInserted) {

@@ -168,3 +168,33 @@ final class HookRegistrationTests: XCTestCase {
         XCTAssertEqual(HookProvider.sessionID(nil, provider: .claude), "claude:unknown")
     }
 }
+
+final class EventRegistrationTests: XCTestCase {
+    let cmd = "/Applications/Squish.app/Contents/MacOS/squish-hook"
+
+    func testClaudeStopHasNoMatcherAndNotificationFiltersByType() {
+        var out = HookSettings.installing(cmd, into: [:], registration: .claudeStop)
+        out = HookSettings.installing(cmd, into: out, registration: .claudeNotification)
+        let hooks = out["hooks"] as? [String: Any]
+        let stop = hooks?["Stop"] as? [[String: Any]]
+        XCTAssertNil(stop?.first?["matcher"])
+        XCTAssertEqual(((stop?.first?["hooks"] as? [[String: Any]])?.first?["timeout"]) as? Int, 10)
+        let notification = hooks?["Notification"] as? [[String: Any]]
+        XCTAssertEqual(notification?.first?["matcher"] as? String, "permission_prompt|idle_prompt")
+        XCTAssertTrue(HookSettings.installed(in: out, command: cmd, registration: .claudeStop))
+        XCTAssertFalse(HookSettings.installed(in: out, command: cmd, registration: .permissionRequest))
+
+        // Removing one registration leaves the other.
+        let without = HookSettings.removing(cmd, from: out, registration: .claudeStop)
+        XCTAssertNil((without["hooks"] as? [String: Any])?["Stop"])
+        XCTAssertTrue(HookSettings.installed(in: without, command: cmd, registration: .claudeNotification))
+    }
+
+    func testRegistrationsPerProviderUseTheirUnits() {
+        XCTAssertEqual(HookSettings.Registration.all(for: .codex).map(\.event), ["PermissionRequest", "Stop"])
+        XCTAssertEqual(HookSettings.Registration.codexStop.matcher, "*")
+        XCTAssertEqual(HookSettings.Registration.all(for: .gemini).map(\.event), ["Notification", "AfterAgent"])
+        XCTAssertEqual(HookSettings.Registration.geminiAfterAgent.timeout, 5_000)
+        XCTAssertEqual(HookSettings.Registration.all(for: .claude).count, 3)
+    }
+}

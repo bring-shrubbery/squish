@@ -1,11 +1,12 @@
 import Foundation
 
-/// File-based rendezvous between the Claude Code hook and Squish.
+/// File-based rendezvous between the agents' hooks and Squish.
 ///
 /// The hook writes a `PendingRequest` into `requests/<id>.json` and blocks
 /// polling for `requests/<id>.decision.json`; Squish watches the directory,
-/// shows the notch, and writes the decision back. A heartbeat file lets the hook
-/// detect whether Squish is actually listening before it ever blocks.
+/// shows the notch, and writes the decision back. One-way news (`AgentEvent`) goes
+/// into `events/<id>.json`, which Squish reads and removes. A heartbeat file lets the
+/// hook detect whether Squish is actually listening before it ever blocks.
 public struct RequestSpool: Sendable {
     /// How long the hook waits for a decision before falling back to Claude's
     /// native prompt.
@@ -18,6 +19,7 @@ public struct RequestSpool: Sendable {
     public let root: URL
 
     public var requestsDirectory: URL { root.appendingPathComponent("requests", isDirectory: true) }
+    public var eventsDirectory: URL { root.appendingPathComponent("events", isDirectory: true) }
     public var heartbeatURL: URL { root.appendingPathComponent("heartbeat", isDirectory: false) }
 
     public init(root: URL) {
@@ -33,6 +35,7 @@ public struct RequestSpool: Sendable {
 
     public func ensureDirectories() throws {
         try FileManager.default.createDirectory(at: requestsDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: eventsDirectory, withIntermediateDirectories: true)
     }
 
     // MARK: - Requests
@@ -69,6 +72,38 @@ public struct RequestSpool: Sendable {
             if now.timeIntervalSince(request.createdAt) > seconds {
                 clearRequest(id: request.id)
             }
+        }
+    }
+
+    // MARK: - Events
+
+    public func writeEvent(_ event: AgentEvent) throws {
+        let data = try encoder.encode(event)
+        try data.write(to: eventURL(for: event.id), options: .atomic)
+    }
+
+    /// Every event not yet taken, oldest first. Unreadable files are dropped.
+    public func pendingEvents() -> [AgentEvent] {
+        eventFiles()
+            .compactMap { url -> AgentEvent? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                guard let event = try? decoder.decode(AgentEvent.self, from: data) else {
+                    try? FileManager.default.removeItem(at: url)
+                    return nil
+                }
+                return event
+            }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func clearEvent(id: String) {
+        try? FileManager.default.removeItem(at: eventURL(for: id))
+    }
+
+    /// Drops events nobody took in time, for instance ones written while no app was reading.
+    public func cleanupStaleEvents(olderThan seconds: TimeInterval, now: Date = Date()) {
+        for event in pendingEvents() where now.timeIntervalSince(event.createdAt) > seconds {
+            clearEvent(id: event.id)
         }
     }
 
@@ -118,6 +153,18 @@ public struct RequestSpool: Sendable {
 
     private func decisionURL(for id: String) -> URL {
         requestsDirectory.appendingPathComponent("\(id).decision.json", isDirectory: false)
+    }
+
+    private func eventURL(for id: String) -> URL {
+        eventsDirectory.appendingPathComponent("\(id).json", isDirectory: false)
+    }
+
+    private func eventFiles() -> [URL] {
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: eventsDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        return contents.filter { $0.pathExtension == "json" }
     }
 
     private func idFromRequestURL(_ url: URL) -> String {
