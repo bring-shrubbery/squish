@@ -1,13 +1,13 @@
 {
-  "originHash" : "71e4126b23cc682de56894b8b125e01bfe5a3b72a5a9b662d6bdfc27fafd9ca4",
+  "originHash" : "482cd42059707a0b685bbd7a4917feab697f3573a68796f6066017d17cf88a1d",
   "pins" : [
     {
       "identity" : "dynamic-landing",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bring-shrubbery/dynamic-landing",
       "state" : {
-        "revision" : "f24f0014fbdc3589eab41b021adaa81215cc9448",
-        "version" : "0.1.4"
+        "revision" : "c67523c84fdc1e99c1f54af050342442ceca4bfb",
+        "version" : "0.2.0"
       }
     },
     {

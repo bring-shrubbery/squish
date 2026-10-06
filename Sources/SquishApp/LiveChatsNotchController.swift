@@ -11,7 +11,7 @@ import SwiftUI
 final class LiveChatsNotchController {
     private let model = LiveChatsModel()
     private var panelRequested = false
-    private var desiredState: DesiredState = .hidden
+    private var desired: (state: DesiredState, importance: NotchIsland.Importance) = (.hidden, .passive)
 
     private enum DesiredState: Equatable { case hidden, compact, expanded }
 
@@ -71,20 +71,29 @@ final class LiveChatsNotchController {
         }
     }
 
+    /// Sets the island's standing content when the state changes, or when the same state
+    /// comes to matter more or less (a prompt opening inside the panel), which re-shows the
+    /// same content under the new priority.
     private func transition(to state: DesiredState) {
-        guard state != desiredState else { return }
-        desiredState = state
+        // A prompt must hold the notch against other apps; the panel the user opened and the
+        // pill need not.
+        let importance: NotchIsland.Importance = switch state {
+        case .hidden, .compact: .passive
+        case .expanded: model.mode == .prompt ? .urgent : .normal
+        }
+        guard state != desired.state || importance != desired.importance else { return }
+        desired = (state, importance)
         let model = model
         switch state {
         case .hidden:
-            NotchIsland.shared.setStanding(.hidden)
+            NotchIsland.shared.setStanding(.hidden, importance: importance)
         case .compact:
             NotchIsland.shared.setStanding(.compact(
                 leading: AnyView(LiveChatsCompactLeading(model: model)),
                 trailing: AnyView(LiveChatsCompactTrailing(model: model))
-            ))
+            ), importance: importance)
         case .expanded:
-            NotchIsland.shared.setStanding(.expanded(AnyView(LiveChatsExpandedView(model: model))))
+            NotchIsland.shared.setStanding(.expanded(AnyView(LiveChatsExpandedView(model: model))), importance: importance)
         }
     }
 }

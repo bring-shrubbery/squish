@@ -13,7 +13,7 @@ let package = Package(
         .executable(name: "squish-pricing", targets: ["SquishPricing"])
     ],
     dependencies: [
-        .package(url: "https://github.com/bring-shrubbery/dynamic-landing", from: "0.1.4"),
+        .package(url: "https://github.com/bring-shrubbery/dynamic-landing", from: "0.2.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0")
     ],
     targets: [

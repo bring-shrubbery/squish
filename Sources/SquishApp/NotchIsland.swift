@@ -4,11 +4,15 @@ import SwiftUI
 
 /// The one island Squish shows at the notch, shared by everything that wants it.
 ///
-/// DynamicLanding draws one island per instance and two instances would overlap, so the
-/// live chats and the compact alert go through here. The live chats own the island's
-/// standing content (hidden, the compact pill, or the expanded panel); an alert takes it
-/// over for a while, and the island morphs back to the standing content when the alert is
-/// done. Everything is a reshape of the same island, never a second one on top.
+/// DynamicLanding draws one island per instance, so the live chats and the compact alert go
+/// through here. The live chats own the island's standing content (hidden, the compact pill,
+/// or the expanded panel); an alert takes it over for a while, and the island morphs back to
+/// the standing content when the alert is done. Everything is a reshape of the same island,
+/// never a second one on top.
+///
+/// Other apps' islands are DynamicLanding's business: each piece of content carries a
+/// priority, so a passive pill gives way to another app's timer, and a permission prompt
+/// holds the notch against it. A yielded island keeps its content and comes back by itself.
 @MainActor
 final class NotchIsland {
     static let shared = NotchIsland()
@@ -19,8 +23,27 @@ final class NotchIsland {
         case expanded(AnyView)
     }
 
+    /// How much each piece of content matters next to other apps' islands.
+    enum Importance {
+        /// The active-sessions pill: anything may replace it.
+        case passive
+        /// The panel the user opened, or the compact alert.
+        case normal
+        /// A permission prompt or a question waiting for an answer.
+        case urgent
+
+        var priority: IslandPriority {
+            switch self {
+            case .passive: .background
+            case .normal: .normal
+            case .urgent: .urgent
+            }
+        }
+    }
+
     private let island: DynamicLanding
     private var standing: Content = .hidden
+    private var standingImportance: Importance = .passive
     private var alertTask: Task<Void, Never>?
     private(set) var isShowingAlert = false
 
@@ -38,10 +61,11 @@ final class NotchIsland {
 
     /// What the island shows when no alert has it. Applied at once unless an alert is up, in
     /// which case it is what the island returns to.
-    func setStanding(_ content: Content) {
+    func setStanding(_ content: Content, importance: Importance) {
         standing = content
+        standingImportance = importance
         guard !isShowingAlert else { return }
-        apply(content)
+        apply(content, importance: importance)
     }
 
     /// Takes the island for `duration`, then hands it back to the standing content. A newer
@@ -49,20 +73,21 @@ final class NotchIsland {
     func showAlert(_ view: AnyView, for duration: Duration) {
         alertTask?.cancel()
         isShowingAlert = true
-        apply(.expanded(view))
+        apply(.expanded(view), importance: .normal)
         alertTask = Task { [weak self] in
             try? await Task.sleep(for: duration)
             guard !Task.isCancelled, let self else { return }
             self.isShowingAlert = false
             self.alertTask = nil
-            self.apply(self.standing)
+            self.apply(self.standing, importance: self.standingImportance)
         }
     }
 
     /// Each call takes effect before it first suspends, so calls apply in order and the last
-    /// one wins, which is the library's contract.
-    private func apply(_ content: Content) {
+    /// one wins, which is the library's contract. The priority is read at each show.
+    private func apply(_ content: Content, importance: Importance) {
         let island = island
+        island.configuration.priority = importance.priority
         Task { @MainActor in
             switch content {
             case .hidden:
