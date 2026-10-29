@@ -25,6 +25,18 @@ Download `Squish-vX.Y.Z-macos-arm64.dmg` from the [latest release](https://githu
 
 Squish checks for updates automatically through [Sparkle](https://sparkle-project.org) and installs them after asking; **Squish → Check for Updates…** checks on demand. Every update is verified against Squish's signing key before it is installed.
 
+### The command-line tool
+
+`squish`, a separate command-line tool written in Rust, does the worktree cleanup from a terminal, on macOS or Linux, with or without the app:
+
+```sh
+brew install bring-shrubbery/tap/squish
+squish analyze ~/Projects   # every linked worktree, its size, age and unsaved work
+squish clean ~/Projects     # pick the ones to remove; asks before deleting anything
+```
+
+It follows the same safety rules as the app. [cli/README.md](cli/README.md) has the details.
+
 ## Usage
 
 1. **Choose a folder.** On first launch, pick the folder that holds your projects (later: **File → Choose Project Folder…**, `⇧⌘O`). Squish remembers it.
@@ -91,6 +103,8 @@ swift run Squish          # run during development
 swift test                # the SquishCore tests
 ./scripts/build-app.sh    # dist/Squish.app, signed ad hoc
 ```
+
+The command-line tool is a separate Rust crate in [`cli/`](cli/README.md) (`cd cli && cargo test`).
 
 The package has three targets: `SquishCore` (session parsing, pricing, the cost ledger, hook settings), `SquishApp` (the SwiftUI app and the notch) and `SquishHook` (the `squish-hook` executable Claude Code runs). Releases are built, signed, notarized and published automatically from `main`; [docs/release.md](docs/release.md) explains the pipeline.
 
