@@ -140,6 +140,34 @@ Push a code change to `main`, or run the Release workflow from the Actions tab w
 **Run workflow** (only `main` is honoured). Until the secrets exist, every code push
 produces one red Release run that stops at the secrets check; that is expected.
 
+## The squish CLI
+
+The command-line tool in `cli/` ships on its own, from `.github/workflows/cli-release.yml`,
+and never cuts an app release: `scripts/release-changes.sh` leaves out `cli/`, the
+`cli-*.yml` workflows and the `release-cli-*` scripts, and `scripts/release-notes.sh`
+leaves out commits scoped `cli`.
+
+- **Version.** The `version` in `cli/Cargo.toml`. When a green CLI CI run on `main` finds
+  no `cli-v<version>` tag, the release runs; otherwise it does nothing. Raise the version
+  to ship. Tags are `cli-vX.Y.Z`, which `release-version.sh` ignores.
+- **Build.** `aarch64-apple-darwin` and `x86_64-apple-darwin` on a macOS runner,
+  `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` (static) on Linux runners.
+  Each archive, `squish-X.Y.Z-<target>.tar.gz`, holds the binary, the licence files and
+  the CLI's README, with a `.sha256` beside it. The binaries are not Developer ID signed;
+  Homebrew does not quarantine what it downloads, so they run as installed.
+- **Release.** Tagged `cli-vX.Y.Z` and published with `--latest=false`, because the
+  website and the README download the app from `releases/latest`. The notes are the
+  `(cli)`-scoped commit subjects since the previous CLI tag.
+- **Homebrew.** `scripts/release-cli-formula.sh` writes `squish.rb` (attached to the
+  release too), and the workflow commits it to `Formula/squish.rb` in
+  `bring-shrubbery/homebrew-tap`, so `brew install bring-shrubbery/tap/squish` and
+  `brew upgrade` pick it up.
+
+One-time setup for the tap: create the public repository `bring-shrubbery/homebrew-tap`,
+then add the secret `HOMEBREW_TAP_TOKEN` to this repository: a fine-grained token with
+*Contents: read and write* on that repository only. Without the secret the release still
+publishes and warns; copy `squish.rb` from the release into the tap by hand.
+
 ## When it fails
 
 - **missing repository secrets**: the first step names them; add and re-run.
@@ -155,3 +183,7 @@ produces one red Release run that stops at the secrets check; that is expected.
   re-run.
 - **Rebuild the website failed**: the release is out; only the site's download button
   is stale. Re-run the build from the Worker's *Builds* page in the Cloudflare dashboard.
+- **CLI Release: the tag exists but the release is missing**: delete the tag
+  (`git push origin :refs/tags/cli-vX.Y.Z`) and run CLI Release from the Actions tab.
+- **CLI Release: Update the Homebrew tap failed**: the release is out. Check the token
+  can write to the tap, then commit `squish.rb` from the release as `Formula/squish.rb`.

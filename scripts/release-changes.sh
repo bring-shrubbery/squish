@@ -1,6 +1,6 @@
 #!/bin/bash
-# Prints the paths changed since the previous release tag that are worth a
-# release, one per line; prints nothing when only documentation changed.
+# Prints the paths changed since the previous release tag that are worth an app
+# release, one per line; prints nothing when only documentation or the CLI changed.
 # A git query that fails (an unknown tag) exits non-zero; the workflow must stop,
 # not treat it as nothing to release.
 #
@@ -8,7 +8,8 @@
 #   release-changes.sh ""       every tracked path (no release exists yet)
 #
 # Documentation is docs/, the website under web/, any *.md, LICENSE, NOTICE
-# and .github/ except the workflows. RELEASE_PATHS (one path per line) replaces
+# and .github/ except the workflows. The squish CLI (cli/, its cli-*.yml workflows and
+# its release-cli-* scripts) ships on its own cli-v* tags. RELEASE_PATHS (one path per line) replaces
 # the git query; the test uses it.
 set -euo pipefail
 
@@ -28,6 +29,7 @@ changed_paths() {
 is_documentation() {
     case "$1" in
         docs/*|web/*|*.md|LICENSE|NOTICE) return 0 ;;
+        cli/*|.github/workflows/cli-*.yml|scripts/release-cli-*) return 0 ;;
         .github/workflows/*) return 1 ;;
         .github/*) return 0 ;;
     esac

@@ -2,7 +2,7 @@
 # Prints the release notes for the commits since the previous release tag: one line per
 # commit subject, oldest first, with its `type(scope):` prefix dropped and the first letter
 # raised. Commits that change nothing in the app are left out: the types docs, web, ci, test
-# and chore, and the scopes docs, web and ci (`feat(web): …`). A release with nothing left
+# and chore, and the scopes docs, web, ci and cli (`feat(web): …`; the CLI has its own notes). A release with nothing left
 # says "Maintenance release."
 #
 #   release-notes.sh v1.0.2 --html       an <ul> for the appcast's <description>
@@ -48,7 +48,7 @@ entry() {
         docs|web|ci|test|chore) return 0 ;;
     esac
     case "$scope" in
-        docs|web|ci) return 0 ;;
+        docs|web|ci|cli) return 0 ;;
     esac
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0

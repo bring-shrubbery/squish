@@ -1,0 +1,187 @@
+name: CLI Release
+
+# Publishes the squish CLI when cli/Cargo.toml carries a version with no cli-v<version> tag
+# yet: binaries for macOS and Linux (arm64 and x86_64) on a GitHub release that is never
+# marked latest (the app's download links use releases/latest), then the Homebrew formula in
+# the tap. Raise the version in cli/Cargo.toml to ship one. docs/release.md explains the flow.
+
+on:
+  workflow_run:
+    workflows: [CLI CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Decide the version
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - name: Compare with the released versions
+        id: decide
+        run: |
+          version=$(sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\)"$/\1/p' cli/Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::no major.minor.patch version in cli/Cargo.toml"; exit 1
+          fi
+          tag="cli-v$version"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag is already released; raise the version in cli/Cargo.toml to ship another"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "releasing $tag"
+            { echo "release=true"; echo "version=$version"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    strategy:
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-26 }
+          - { target: x86_64-apple-darwin, os: macos-26 }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - name: Install Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add "$TARGET"
+      - name: Install musl
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Build
+        working-directory: cli
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Package
+        run: |
+          name="squish-$VERSION-$TARGET"
+          mkdir -p "dist/$name"
+          cp "cli/target/$TARGET/release/squish" LICENSE NOTICE cli/README.md "dist/$name/"
+          # Every runner can run its own target; the Intel Mac build is checked by its format.
+          if [ "$TARGET" = x86_64-apple-darwin ]; then
+            file "dist/$name/squish" | tee /dev/stderr | grep -q x86_64
+          else
+            built=$("dist/$name/squish" --version)
+            [ "$built" = "squish $VERSION" ] || { echo "::error::built $built, expected squish $VERSION"; exit 1; }
+          fi
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          cat "dist/$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+      SHA: ${{ needs.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+      - name: Write the formula and the notes
+        run: |
+          scripts/release-cli-formula.sh --version "$VERSION" --repo "$GITHUB_REPOSITORY" --sha-dir dist > dist/squish.rb
+          cat dist/squish.rb
+          # The notes: subjects of cli-scoped commits since the previous CLI release, prefix dropped.
+          previous=$(git tag -l 'cli-v*' --sort=-v:refname | head -1)
+          range=${previous:+$previous..}$SHA
+          {
+            git log --no-merges --reverse --format=%s "$range" -- cli/ \
+              | sed -n 's/^[a-z]*(cli)!\{0,1\}: //p' \
+              | awk '{ print "- " toupper(substr($0, 1, 1)) substr($0, 2) }'
+            echo
+            echo "Install with \`brew install ${GITHUB_REPOSITORY_OWNER}/tap/squish\`, or download the archive for your platform below."
+          } > dist/notes.md
+          cat dist/notes.md
+      - name: Tag and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "squish CLI $TAG" "$SHA"
+          git push origin "refs/tags/$TAG"
+          # Never latest: the app's website and README download from releases/latest.
+          gh release create "$TAG" --verify-tag --latest=false \
+            --title "squish CLI $VERSION" --notes-file dist/notes.md \
+            dist/*.tar.gz dist/*.tar.gz.sha256 dist/squish.rb
+      - name: Update the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP: ${{ github.repository_owner }}/homebrew-tap
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; copy squish.rb from the release into $TAP/Formula by hand (docs/release.md)"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:$TAP_TOKEN@github.com/$TAP.git" tap
+          mkdir -p tap/Formula
+          cp dist/squish.rb tap/Formula/squish.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/squish.rb
+          if git diff --cached --quiet; then
+            echo "the tap already has this formula"
+          else
+            git commit -m "squish $VERSION"
+            git push
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## squish CLI $TAG"
+            echo
+            echo "- commit \`$SHA\`"
+            echo "- https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

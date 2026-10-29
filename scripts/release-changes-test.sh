@@ -28,6 +28,8 @@ check "md under app"     "Sources/SquishCore/README.md Package.swift" "Package.s
 check "nothing"          "" ""
 check "website"          "web/src/pages/index.astro web/package.json" ""
 check "website and app"  "web/src/pages/index.astro scripts/build-app.sh" "scripts/build-app.sh"
+check "cli only"         "cli/src/main.rs cli/Cargo.toml .github/workflows/cli-ci.yml .github/workflows/cli-release.yml scripts/release-cli-formula.sh" ""
+check "cli and app"      "cli/src/main.rs Sources/SquishCore/GitClient.swift" "Sources/SquishCore/GitClient.swift"
 
 # With no previous tag every tracked path counts; the real repo has code, so output is non-empty.
 if [ -n "$("$SCRIPT" "")" ]; then

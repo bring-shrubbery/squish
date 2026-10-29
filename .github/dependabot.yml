@@ -10,3 +10,8 @@ updates:
     schedule:
       interval: monthly
     labels: ["dependencies"]
+  - package-ecosystem: cargo
+    directory: "/cli"
+    schedule:
+      interval: monthly
+    labels: ["dependencies"]

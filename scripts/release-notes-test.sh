@@ -32,6 +32,10 @@ check "conventional types and scopes" --markdown \
     "feat(app): render questions|fix(core)!: alert on growth|docs(app): notes|feat(web): hero|chore: bump|test(core): more" \
     "- Render questions${nl}- Alert on growth"
 
+check "cli commits are left out of the app's notes" --markdown \
+    "feat(cli): squish clean|fix(app): the menu" \
+    "- The menu"
+
 check "a subject without an area is kept as it is" --markdown \
     "initial import" \
     "- Initial import"
